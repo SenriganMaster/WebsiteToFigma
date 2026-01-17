@@ -21,7 +21,13 @@ figma.ui.onmessage = async (msg) => {
 
       const stats = await importFigcapToFigma(data, options);
 
-      figma.ui.postMessage({ type: 'IMPORT_RESULT', ok: true, ...stats });
+      figma.ui.postMessage({
+        type: 'IMPORT_RESULT',
+        ok: true,
+        frames: stats.frames,
+        rects: stats.rects,
+        texts: stats.texts
+      });
       figma.notify(`Imported: frames=${stats.frames}, rects=${stats.rects}, texts=${stats.texts}`);
     } catch (e) {
       figma.ui.postMessage({ type: 'IMPORT_RESULT', ok: false, error: String(e && e.message ? e.message : e) });
