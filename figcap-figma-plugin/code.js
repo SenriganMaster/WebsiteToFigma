@@ -201,14 +201,18 @@ function createRectFromLayer(parent, layer) {
   // Image fill if dataUrl is available
   const imgDataUrl = layer.image && layer.image.dataUrl ? layer.image.dataUrl : "";
   if (imgDataUrl) {
-    const bytes = dataUrlToBytes(imgDataUrl);
-    if (bytes) {
-      const img = figma.createImage(bytes);
-      rect.fills = [{
-        type: 'IMAGE',
-        imageHash: img.hash,
-        scaleMode: 'FILL'
-      }];
+    try {
+      const bytes = dataUrlToBytes(imgDataUrl);
+      if (bytes) {
+        const img = figma.createImage(bytes);
+        rect.fills = [{
+          type: 'IMAGE',
+          imageHash: img.hash,
+          scaleMode: 'FILL'
+        }];
+      }
+    } catch (_) {
+      // ignore image failures to keep import running
     }
   }
 
@@ -541,14 +545,27 @@ function parseFirstDropShadow(v) {
 }
 
 function dataUrlToBytes(dataUrl) {
-  const m = String(dataUrl).match(/^data:.*;base64,(.*)$/);
-  if (!m) return null;
-  const b64 = m[1];
-  const bin = atob(b64);
-  const len = bin.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
+  const s = String(dataUrl);
+  const base64Match = s.match(/^data:.*;base64,(.*)$/);
+  if (base64Match) {
+    const b64 = base64Match[1];
+    const bin = atob(b64);
+    const len = bin.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  const textMatch = s.match(/^data:.*?,(.*)$/);
+  if (!textMatch) return null;
+
+  const text = decodeURIComponent(textMatch[1]);
+  return utf8ToBytes(text);
+}
+
+function utf8ToBytes(text) {
+  const encoded = new TextEncoder().encode(text);
+  return encoded;
 }
 
 function splitOutsideParens(s) {
