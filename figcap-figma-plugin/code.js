@@ -495,8 +495,10 @@ function parseFirstDropShadow(v) {
     // Expect: offset-x offset-y blur spread?
     const ox = parsePx(tokens[0]);
     const oy = parsePx(tokens[1]);
-    const blur = parsePx(tokens[2]) ?? 0;
-    const spread = parsePx(tokens[3]) ?? 0;
+    const blurVal = parsePx(tokens[2]);
+    const spreadVal = parsePx(tokens[3]);
+    const blur = isFiniteNumber(blurVal) ? blurVal : 0;
+    const spread = isFiniteNumber(spreadVal) ? spreadVal : 0;
 
     if (![ox, oy].every(isFiniteNumber)) continue;
 
