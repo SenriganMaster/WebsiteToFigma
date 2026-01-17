@@ -198,6 +198,20 @@ function createRectFromLayer(parent, layer) {
   const style = layer.style || {};
   applyBoxStyle(rect, style);
 
+  // Image fill if dataUrl is available
+  const imgDataUrl = layer.image && layer.image.dataUrl ? layer.image.dataUrl : "";
+  if (imgDataUrl) {
+    const bytes = dataUrlToBytes(imgDataUrl);
+    if (bytes) {
+      const img = figma.createImage(bytes);
+      rect.fills = [{
+        type: 'IMAGE',
+        imageHash: img.hash,
+        scaleMode: 'FILL'
+      }];
+    }
+  }
+
   // name for debugging
   rect.name = `Rect ${String(layer.tag || '')}`.trim();
 
@@ -524,6 +538,17 @@ function parseFirstDropShadow(v) {
   }
 
   return null;
+}
+
+function dataUrlToBytes(dataUrl) {
+  const m = String(dataUrl).match(/^data:.*;base64,(.*)$/);
+  if (!m) return null;
+  const b64 = m[1];
+  const bin = atob(b64);
+  const len = bin.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
 }
 
 function splitOutsideParens(s) {

@@ -11,6 +11,7 @@ let currentTabId = null;
 let candidates = [];
 let selected = new Set();
 let lastScanMeta = null; // keep scan meta for capture
+const imageCache = new Map();
 
 function log(...args) {
   elLog.textContent += args.join(" ") + "\n";
@@ -113,6 +114,52 @@ function renderList() {
   }
 }
 
+function extractFirstUrlFromCssValue(value) {
+  if (!value) return "";
+  const match = String(value).match(/url\((['"]?)(.*?)\1\)/i);
+  return match ? match[2] : "";
+}
+
+async function fetchImageDataUrl(url) {
+  if (!url) return null;
+  if (imageCache.has(url)) return imageCache.get(url);
+  if (url.startsWith("data:")) return url;
+
+  const res = await chrome.runtime.sendMessage({ type: "FIGCAP_FETCH_IMAGE", url });
+  if (res && res.ok && res.dataUrl) {
+    imageCache.set(url, res.dataUrl);
+    return res.dataUrl;
+  }
+  return null;
+}
+
+async function enrichImageLayers(result) {
+  const selections = result && result.selections ? result.selections : [];
+  for (const sel of selections) {
+    const layers = Array.isArray(sel.layers) ? sel.layers : [];
+    for (const layer of layers) {
+      const existing = layer.image && layer.image.src ? layer.image.src : "";
+      let src = existing;
+
+      if (!src && layer.style && layer.style["background-image"]) {
+        src = extractFirstUrlFromCssValue(layer.style["background-image"]);
+      }
+
+      if (!src) continue;
+
+      if (src.startsWith("data:")) {
+        layer.image = { src, dataUrl: src };
+        continue;
+      }
+
+      const dataUrl = await fetchImageDataUrl(src);
+      if (dataUrl) {
+        layer.image = { src, dataUrl };
+      }
+    }
+  }
+}
+
 btnScan.addEventListener("click", async () => {
   elLog.textContent = "";
   currentTabId = await getActiveTabId();
@@ -198,6 +245,12 @@ btnCapture.addEventListener("click", async () => {
   // Ensure page meta is always the scan meta
   if (meta) result.page = meta;
 
+  try {
+    await enrichImageLayers(result);
+  } catch (e) {
+    log("Image enrich failed:", String(e));
+  }
+
   await downloadJSON(result);
   log("Downloaded JSON.");
 });
@@ -242,17 +295,21 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
   const s = (idx) => (idx == null ? "" : strings[idx] ?? "");
 
   // Map selected figcap-id -> nodeIndex
+  const nodeAttrs = new Map();
   const idToNodeIndex = new Map();
   for (let i = 0; i < attrs.length; i++) {
     const a = attrs[i];
     if (!a || !a.length) continue;
+    const attrMap = new Map();
     for (let j = 0; j < a.length; j += 2) {
       const k = s(a[j]);
+      const v = s(a[j + 1]);
+      attrMap.set(k, v);
       if (k === "data-figcap-id") {
-        const v = s(a[j + 1]);
         if (selectedIds.includes(v)) idToNodeIndex.set(v, i);
       }
     }
+    nodeAttrs.set(i, attrMap);
   }
 
   // children adjacency
@@ -345,6 +402,15 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
       if (rawText && !t) continue;
       const layerType = t ? "TEXT" : (tag === "img" ? "IMAGE" : "BOX");
 
+      let imageSrc = "";
+      if (tag === "img") {
+        const amap = nodeAttrs.get(ni);
+        if (amap && amap.has("src")) imageSrc = amap.get("src");
+      }
+      if (!imageSrc && style["background-image"]) {
+        imageSrc = extractFirstUrlFromCssValue(style["background-image"]);
+      }
+
       layers.push({
         nodeIndex: ni,
         tag,
@@ -352,7 +418,8 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
         bounds: rel,
         text: t || "",
         style,
-        paintOrder: paintOrders ? paintOrders[i] : i
+        paintOrder: paintOrders ? paintOrders[i] : i,
+        image: imageSrc ? { src: imageSrc } : undefined
       });
     }
 
