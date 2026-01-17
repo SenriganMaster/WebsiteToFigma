@@ -8,3 +8,4 @@
 - Resolved relative image URLs and srcset during capture to improve image embedding.
 - Added CDP clip screenshot fallback to embed images when URL fetch fails.
 - Added image placeholders with filename labels when images are missing.
+- Improved image capture: added Canvas-based fallback, CDP attr extraction, and visible placeholder with gray background.
