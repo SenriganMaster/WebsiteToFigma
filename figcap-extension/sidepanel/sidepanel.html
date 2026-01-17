@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>FigCap</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header>
+      <h1>FigCap B</h1>
+      <div id="tabInfo"></div>
+      <div class="row">
+        <button id="btnScan">Scan</button>
+        <button id="btnPick">Pick</button>
+        <button id="btnCapture">Capture</button>
+        <button id="btnClear">Clear</button>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <h2>Candidates</h2>
+        <div id="list"></div>
+      </section>
+
+      <section>
+        <h2>Log</h2>
+        <pre id="log"></pre>
+      </section>
+    </main>
+
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

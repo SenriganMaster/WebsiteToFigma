@@ -1,0 +1,23 @@
+#__figcap_overlay_root__ {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: 2147483647;
+}
+
+#__figcap_overlay_root__ .figcap-box {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+#__figcap_overlay_root__ .figcap-highlight {
+  border: 2px solid rgba(255, 0, 200, 0.9);
+  background: rgba(255, 0, 200, 0.08);
+}
+
+#__figcap_overlay_root__ .figcap-hover {
+  border: 2px solid rgba(0, 200, 255, 0.9);
+  background: rgba(0, 200, 255, 0.08);
+}

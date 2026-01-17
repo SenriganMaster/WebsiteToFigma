@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "FigCap B (DOM -> JSON)",
+  "version": "0.1.0",
+  "description": "Scan current page sections, let user select, export DOM/layout/style snapshot as JSON.",
+  "action": { "default_title": "FigCap" },
+  "background": {
+    "service_worker": "service_worker.js",
+    "type": "module"
+  },
+  "permissions": [
+    "scripting",
+    "sidePanel",
+    "debugger",
+    "downloads"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
+}

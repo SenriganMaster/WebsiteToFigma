@@ -15,13 +15,13 @@
 ## 🎯 Phase 1: Chrome拡張B（figcap-extension）
 
 ### 1.1 ディレクトリ構造作成
-- [x] `figcap-extension/` フォルダ作成 (作業中)
-- [ ] `figcap-extension/sidepanel/` フォルダ作成
-- [ ] `figcap-extension/content/` フォルダ作成
-- [ ] `figcap-extension/icons/` フォルダ作成
+- [x] `figcap-extension/` フォルダ作成 (2026-01-17 完了)
+- [x] `figcap-extension/sidepanel/` フォルダ作成 (2026-01-17 完了)
+- [x] `figcap-extension/content/` フォルダ作成 (2026-01-17 完了)
+- [x] `figcap-extension/icons/` フォルダ作成 (2026-01-17 完了)
 
 ### 1.2 manifest.json
-- [ ] `figcap-extension/manifest.json` 作成
+- [x] `figcap-extension/manifest.json` 作成 (2026-01-17 完了)
   - manifest_version: 3
   - permissions: scripting, sidePanel, debugger, downloads
   - host_permissions: <all_urls>
@@ -29,23 +29,23 @@
   - icons設定
 
 ### 1.3 Service Worker
-- [ ] `figcap-extension/service_worker.js` 作成
+- [x] `figcap-extension/service_worker.js` 作成 (2026-01-17 完了)
   - chrome.runtime.onInstalled でサイドパネル動作設定
   - setPanelBehavior({ openPanelOnActionClick: true })
 
 ### 1.4 Side Panel UI
-- [ ] `figcap-extension/sidepanel/sidepanel.html` 作成
+- [x] `figcap-extension/sidepanel/sidepanel.html` 作成 (2026-01-17 完了)
   - Scan / Pick / Capture / Clear ボタン
   - 候補リスト表示エリア (#list)
   - タブ情報表示 (#tabInfo)
   - ログ表示 (#log)
-- [ ] `figcap-extension/sidepanel/sidepanel.css` 作成
+- [x] `figcap-extension/sidepanel/sidepanel.css` 作成 (2026-01-17 完了)
   - ボタン行レイアウト
   - 候補リストスタイル
   - ログエリアスタイル（ダークテーマ）
 
 ### 1.5 Side Panel ロジック（重要・最大のファイル）
-- [ ] `figcap-extension/sidepanel/sidepanel.js` 作成
+- [x] `figcap-extension/sidepanel/sidepanel.js` 作成 (2026-01-17 完了)
   - 状態管理: currentTabId, candidates, selected, lastScanMeta
   - **ensureContentScript()**: PING確認 → 未注入ならスクリプト注入
   - **btnScan**: FIGCAP_SCAN → 候補リスト描画 → meta保存
@@ -69,7 +69,7 @@
   - chrome.runtime.onMessage (FIGCAP_PICKED受信)
 
 ### 1.6 Content Script（ページ側ロジック）
-- [ ] `figcap-extension/content/contentScript.js` 作成
+- [x] `figcap-extension/content/contentScript.js` 作成 (2026-01-17 完了)
   - 状態管理: candidates Map, overlayRoot, picking, marked
   - **ヘルパー関数**:
     - uid(): crypto.randomUUID()
@@ -108,18 +108,18 @@
     - FIGCAP_CAPTURE_DOM
 
 ### 1.7 Overlay CSS
-- [ ] `figcap-extension/content/overlay.css` 作成
+- [x] `figcap-extension/content/overlay.css` 作成 (2026-01-17 完了)
   - #__figcap_overlay_root__ スタイル
   - .figcap-box 基本スタイル
   - .figcap-highlight（ピンク枠）
   - .figcap-hover（水色枠）
 
 ### 1.8 アイコン作成
-- [ ] `figcap-extension/icons/icon.svg` 作成（SVGソース）
-- [ ] PNG変換（ImageMagick or Inkscape）
-  - [ ] `figcap-extension/icons/16.png`
-  - [ ] `figcap-extension/icons/48.png`
-  - [ ] `figcap-extension/icons/128.png`
+- [x] `figcap-extension/icons/icon.svg` 作成（SVGソース） (2026-01-17 完了)
+- [x] PNG変換（ImageMagick or Inkscape） (2026-01-17 完了)
+  - [x] `figcap-extension/icons/16.png` (2026-01-17 完了)
+  - [x] `figcap-extension/icons/48.png` (2026-01-17 完了)
+  - [x] `figcap-extension/icons/128.png` (2026-01-17 完了)
 
 ---
 
