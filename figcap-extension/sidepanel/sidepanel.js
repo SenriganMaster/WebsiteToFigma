@@ -239,6 +239,12 @@ async function enrichImageLayers(result) {
         src = extractFirstUrlFromCssValue(layer.style["background-image"]);
       }
 
+      // Ensure IMAGE layers have at least empty image object for placeholder
+      if (String(layer.type || "").toUpperCase() === "IMAGE") {
+        if (!layer.image) layer.image = { src: src || "" };
+        else if (!layer.image.src) layer.image.src = src || "";
+      }
+
       if (!src) continue;
 
       if (src.startsWith("data:")) {
@@ -249,6 +255,40 @@ async function enrichImageLayers(result) {
       const dataUrl = await fetchImageDataUrl(src, pageUrl);
       if (dataUrl) {
         layer.image = { src, dataUrl };
+      }
+    }
+  }
+}
+
+async function enrichImageLayersViaCanvas(tabId, result) {
+  const selections = result && result.selections ? result.selections : [];
+  for (const sel of selections) {
+    const layers = Array.isArray(sel.layers) ? sel.layers : [];
+    for (const layer of layers) {
+      // Skip if already has dataUrl
+      if (layer.image && layer.image.dataUrl) continue;
+
+      const type = String(layer.type || "").toUpperCase();
+      if (type !== "IMAGE") continue;
+
+      // Try canvas capture for img elements
+      const tag = String(layer.tag || "").toLowerCase();
+      if (tag === "img" || tag === "canvas" || tag === "svg") {
+        const nodeIndex = layer.nodeIndex;
+        if (nodeIndex == null) continue;
+
+        try {
+          const res = await chrome.tabs.sendMessage(tabId, {
+            type: "FIGCAP_CAPTURE_IMAGE",
+            selector: `[data-figcap-node-idx="${nodeIndex}"]`
+          });
+          if (res && res.ok && res.dataUrl) {
+            if (!layer.image) layer.image = {};
+            layer.image.dataUrl = res.dataUrl;
+          }
+        } catch (_) {
+          // ignore
+        }
       }
     }
   }
@@ -339,15 +379,28 @@ btnCapture.addEventListener("click", async () => {
   // Ensure page meta is always the scan meta
   if (meta) result.page = meta;
 
+  // Enrich images via fetch
   try {
     await enrichImageLayers(result);
+    log("Image enrich done.");
   } catch (e) {
     log("Image enrich failed:", String(e));
   }
+
+  // Try CDP clip capture for remaining images
   try {
     await captureImageClipsViaCDP(currentTabId, result);
+    log("Image clip done.");
   } catch (e) {
     log("Image clip capture failed:", String(e));
+  }
+
+  // Try Canvas-based capture for remaining images
+  try {
+    await enrichImageLayersViaCanvas(currentTabId, result);
+    log("Canvas capture done.");
+  } catch (e) {
+    log("Canvas capture failed:", String(e));
   }
 
   await downloadJSON(result);
@@ -503,13 +556,23 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
       const layerType = t ? "TEXT" : (tag === "img" ? "IMAGE" : "BOX");
 
       let imageSrc = "";
+      let imageAlt = "";
       if (tag === "img") {
-        imageSrc = pickImageSrcFromAttrs(nodeAttrs.get(ni), pageUrl);
+        const attrMap = nodeAttrs.get(ni);
+        imageSrc = pickImageSrcFromAttrs(attrMap, pageUrl);
+        if (attrMap) {
+          imageAlt = attrMap.get("alt") || attrMap.get("title") || "";
+        }
       }
       if (!imageSrc && style["background-image"]) {
         const raw = extractFirstUrlFromCssValue(style["background-image"]);
         imageSrc = resolveUrl(raw, pageUrl);
       }
+
+      // Always include image object for IMAGE type to ensure placeholder works
+      const imageObj = (layerType === "IMAGE" || imageSrc)
+        ? { src: imageSrc || "", alt: imageAlt || "" }
+        : undefined;
 
       layers.push({
         nodeIndex: ni,
@@ -519,7 +582,7 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
         text: t || "",
         style,
         paintOrder: paintOrders ? paintOrders[i] : i,
-        image: imageSrc ? { src: imageSrc } : undefined
+        image: imageObj
       });
     }
 

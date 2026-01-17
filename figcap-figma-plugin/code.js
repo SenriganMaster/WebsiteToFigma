@@ -235,16 +235,20 @@ async function ensurePlaceholderFont() {
 }
 
 function imageLabelFromLayer(layer) {
+  // Prefer alt text if available
+  const alt = layer.image && layer.image.alt ? String(layer.image.alt).trim() : '';
+  if (alt) return alt;
+
   const src = layer.image && layer.image.src ? String(layer.image.src) : '';
-  if (!src) return 'IMAGE';
+  if (!src) return '[IMAGE]';
   try {
     const url = new URL(src);
     const path = url.pathname || '';
-    const name = path.split('/').filter(Boolean).pop() || url.hostname || 'IMAGE';
+    const name = path.split('/').filter(Boolean).pop() || url.hostname || '[IMAGE]';
     return decodeURIComponent(name);
   } catch (_) {
     const parts = src.split('/').filter(Boolean);
-    return parts[parts.length - 1] || 'IMAGE';
+    return parts[parts.length - 1] || '[IMAGE]';
   }
 }
 
@@ -256,6 +260,27 @@ async function createImagePlaceholder(parent, rect, layer) {
   }
 
   const label = imageLabelFromLayer(layer);
+
+  // Create background rectangle for placeholder
+  const bg = figma.createRectangle();
+  parent.appendChild(bg);
+  bg.x = rect.x;
+  bg.y = rect.y;
+  bg.resize(Math.max(1, rect.width), Math.max(1, rect.height));
+  bg.fills = [{
+    type: 'SOLID',
+    color: { r: 0.9, g: 0.9, b: 0.9 },
+    opacity: 1
+  }];
+  bg.strokes = [{
+    type: 'SOLID',
+    color: { r: 0.7, g: 0.7, b: 0.7 },
+    opacity: 1
+  }];
+  bg.strokeWeight = 1;
+  bg.name = 'Image Placeholder BG';
+
+  // Create text label
   const textNode = figma.createText();
   parent.appendChild(textNode);
 
@@ -273,7 +298,7 @@ async function createImagePlaceholder(parent, rect, layer) {
   textNode.textAlignVertical = 'CENTER';
   textNode.fills = [{
     type: 'SOLID',
-    color: { r: 0.45, g: 0.45, b: 0.45 },
+    color: { r: 0.4, g: 0.4, b: 0.4 },
     opacity: 1
   }];
 

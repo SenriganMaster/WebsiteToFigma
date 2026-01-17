@@ -502,10 +502,97 @@
         const maxNodes = Number.isFinite(msg.maxNodesPerSelection) ? msg.maxNodesPerSelection : FIGCAP_DEFAULT_MAX_NODES;
         sendResponse(captureDomSelections(ids, maxNodes));
 
+      } else if (msg?.type === "FIGCAP_CAPTURE_IMAGE") {
+        const selector = msg.selector || "";
+        const result = captureImageViaCanvas(selector);
+        sendResponse(result);
+
+      } else if (msg?.type === "FIGCAP_CAPTURE_IMAGES_BATCH") {
+        const selectors = Array.isArray(msg.selectors) ? msg.selectors : [];
+        const results = selectors.map(sel => captureImageViaCanvas(sel));
+        sendResponse({ ok: true, results });
+
       } else {
         sendResponse({ ok: false, error: "unknown message" });
       }
     })();
     return true;
   });
+
+  // ---------------------------
+  // Canvas-based image capture (for CORS bypass within same origin)
+  // ---------------------------
+  function captureImageViaCanvas(selector) {
+    try {
+      const el = document.querySelector(selector);
+      if (!el) return { ok: false, error: "not found" };
+
+      const tag = el.tagName.toLowerCase();
+      if (tag === "img") {
+        return captureImgElement(el);
+      } else if (tag === "canvas") {
+        return captureCanvasElement(el);
+      } else if (tag === "svg") {
+        return captureSvgElement(el);
+      } else {
+        // Try background image
+        return captureBgImage(el);
+      }
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  }
+
+  function captureImgElement(img) {
+    if (!img.complete || img.naturalWidth === 0) {
+      return { ok: false, error: "not loaded" };
+    }
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      const dataUrl = canvas.toDataURL("image/png");
+      return { ok: true, dataUrl };
+    } catch (e) {
+      // CORS tainted canvas
+      return { ok: false, error: "tainted" };
+    }
+  }
+
+  function captureCanvasElement(canvas) {
+    try {
+      const dataUrl = canvas.toDataURL("image/png");
+      return { ok: true, dataUrl };
+    } catch (e) {
+      return { ok: false, error: "tainted" };
+    }
+  }
+
+  function captureSvgElement(svg) {
+    try {
+      const serializer = new XMLSerializer();
+      const svgString = serializer.serializeToString(svg);
+      const dataUrl = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgString);
+      return { ok: true, dataUrl };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  }
+
+  function captureBgImage(el) {
+    const cs = window.getComputedStyle(el);
+    const bgImage = cs.backgroundImage;
+    if (!bgImage || bgImage === "none") {
+      return { ok: false, error: "no bg" };
+    }
+    const match = bgImage.match(/url\((['"]?)(.*?)\1\)/);
+    if (!match) return { ok: false, error: "no url" };
+    const url = match[2];
+    if (url.startsWith("data:")) {
+      return { ok: true, dataUrl: url };
+    }
+    return { ok: false, error: "external", url };
+  }
 })();
