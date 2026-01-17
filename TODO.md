@@ -127,7 +127,7 @@
 ## 🎯 Phase 2: FigmaプラグインC（figcap-figma-plugin）
 
 ### 2.1 ディレクトリ構造作成
-- [ ] `figcap-figma-plugin/` フォルダ作成
+- [x] `figcap-figma-plugin/` フォルダ作成 (作業中)
 
 ### 2.2 manifest.json
 - [ ] `figcap-figma-plugin/manifest.json` 作成
