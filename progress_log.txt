@@ -7,3 +7,4 @@
 - Made image decode failures non-fatal and added non-base64 data URL support.
 - Resolved relative image URLs and srcset during capture to improve image embedding.
 - Added CDP clip screenshot fallback to embed images when URL fetch fails.
+- Added image placeholders with filename labels when images are missing.
