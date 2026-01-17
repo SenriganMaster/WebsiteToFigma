@@ -583,15 +583,37 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
         ? { src: imageSrc || "", alt: imageAlt || "" }
         : undefined;
 
+      // Get parent node index for hierarchy reconstruction
+      const pni = parentIndex[ni];
+      const parentInSubtree = subtree.has(pni) ? pni : null;
+
+      // Check if this is a semantic container tag
+      const semanticTags = ["header", "nav", "main", "section", "article", "aside", "footer"];
+      const isSemantic = semanticTags.includes(tag);
+
+      // Check for ARIA landmark roles
+      const attrMap = nodeAttrs.get(ni);
+      const role = attrMap ? (attrMap.get("role") || "") : "";
+      const landmarkRoles = ["banner", "navigation", "main", "contentinfo", "complementary", "region"];
+      const hasLandmarkRole = landmarkRoles.includes(role);
+
+      // Get id and class for naming
+      const elemId = attrMap ? (attrMap.get("id") || "") : "";
+      const elemClass = attrMap ? (attrMap.get("class") || "") : "";
+
       layers.push({
         nodeIndex: ni,
+        parentNodeIndex: parentInSubtree,
         tag,
         type: layerType,
         bounds: rel,
         text: t || "",
         style,
         paintOrder: paintOrders ? paintOrders[i] : i,
-        image: imageObj
+        image: imageObj,
+        isSemantic: isSemantic || hasLandmarkRole,
+        elemId,
+        elemClass
       });
     }
 

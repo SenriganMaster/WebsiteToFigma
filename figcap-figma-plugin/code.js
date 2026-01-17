@@ -163,22 +163,150 @@ async function importSelection(parentFrame, sel, pos, options) {
   const layers = Array.isArray(sel.layers) ? [...sel.layers] : [];
   layers.sort((a, b) => safeNum(a.paintOrder, 0) - safeNum(b.paintOrder, 0));
 
+  // Build hierarchy: create Frames for semantic containers
+  const nodeToFigmaFrame = new Map(); // nodeIndex -> Figma Frame
+  const nodeToLayer = new Map(); // nodeIndex -> layer data
+  
+  // First pass: index all layers by nodeIndex
+  for (const layer of layers) {
+    if (layer.nodeIndex != null) {
+      nodeToLayer.set(layer.nodeIndex, layer);
+    }
+  }
+
+  // Second pass: create Frames for semantic containers first
   for (const layer of layers) {
     if (!layer || !layer.bounds) continue;
+    if (!layer.isSemantic) continue;
+    
+    const b = normalizeBounds(layer.bounds);
+    if (!b) continue;
+
+    // Find parent frame (either another semantic frame or selFrame)
+    let targetParent = selFrame;
+    if (layer.parentNodeIndex != null) {
+      targetParent = findParentFrame(layer.parentNodeIndex, nodeToLayer, nodeToFigmaFrame, selFrame);
+    }
+
+    // Create frame for semantic container
+    const frame = figma.createFrame();
+    frame.name = buildLayerName(layer);
+    frame.layoutMode = 'NONE';
+    frame.clipsContent = false;
+    frame.fills = []; // transparent
+    
+    targetParent.appendChild(frame);
+    
+    // Position relative to parent
+    if (targetParent === selFrame) {
+      frame.x = b.x;
+      frame.y = b.y;
+    } else {
+      // Position relative to parent frame
+      const parentLayer = findLayerForFrame(targetParent, nodeToFigmaFrame, nodeToLayer);
+      if (parentLayer && parentLayer.bounds) {
+        frame.x = b.x - safeNum(parentLayer.bounds.x, 0);
+        frame.y = b.y - safeNum(parentLayer.bounds.y, 0);
+      } else {
+        frame.x = b.x;
+        frame.y = b.y;
+      }
+    }
+    frame.resize(Math.max(1, b.width), Math.max(1, b.height));
+
+    nodeToFigmaFrame.set(layer.nodeIndex, frame);
+    frames++;
+  }
+
+  // Third pass: create rectangles and text
+  for (const layer of layers) {
+    if (!layer || !layer.bounds) continue;
+    if (layer.isSemantic) continue; // Already handled as Frame
+    
     const type = String(layer.type || '').toUpperCase();
 
+    // Find parent frame
+    let targetParent = selFrame;
+    if (layer.parentNodeIndex != null) {
+      targetParent = findParentFrame(layer.parentNodeIndex, nodeToLayer, nodeToFigmaFrame, selFrame);
+    }
+
+    // Adjust position relative to parent
+    const b = normalizeBounds(layer.bounds);
+    if (!b) continue;
+
+    let adjustedLayer = { ...layer };
+    if (targetParent !== selFrame) {
+      const parentLayer = findLayerForFrame(targetParent, nodeToFigmaFrame, nodeToLayer);
+      if (parentLayer && parentLayer.bounds) {
+        adjustedLayer.bounds = {
+          x: b.x - safeNum(parentLayer.bounds.x, 0),
+          y: b.y - safeNum(parentLayer.bounds.y, 0),
+          width: b.width,
+          height: b.height
+        };
+      }
+    }
+
     if (type === 'TEXT') {
-      const ok = await createTextFromLayer(selFrame, layer, options);
+      const ok = await createTextFromLayer(targetParent, adjustedLayer, options);
       if (ok) texts++;
     } else if (type === 'BOX' || type === 'IMAGE') {
-      const ok = await createRectFromLayer(selFrame, layer);
+      const ok = await createRectFromLayer(targetParent, adjustedLayer);
       if (ok) rects++;
-    } else {
-      // ignore unknown
     }
   }
 
   return { frames, rects, texts };
+}
+
+// Find the closest semantic parent frame for a layer
+function findParentFrame(parentNodeIndex, nodeToLayer, nodeToFigmaFrame, defaultFrame) {
+  let current = parentNodeIndex;
+  const visited = new Set();
+  
+  while (current != null && !visited.has(current)) {
+    visited.add(current);
+    
+    // Check if this node has a Figma Frame
+    if (nodeToFigmaFrame.has(current)) {
+      return nodeToFigmaFrame.get(current);
+    }
+    
+    // Move to parent
+    const parentLayer = nodeToLayer.get(current);
+    if (parentLayer && parentLayer.parentNodeIndex != null) {
+      current = parentLayer.parentNodeIndex;
+    } else {
+      break;
+    }
+  }
+  
+  return defaultFrame;
+}
+
+// Find the layer data for a Figma frame
+function findLayerForFrame(frame, nodeToFigmaFrame, nodeToLayer) {
+  for (const [nodeIndex, figmaFrame] of nodeToFigmaFrame.entries()) {
+    if (figmaFrame === frame) {
+      return nodeToLayer.get(nodeIndex);
+    }
+  }
+  return null;
+}
+
+// Build a descriptive name for a layer
+function buildLayerName(layer) {
+  const tag = String(layer.tag || '').toLowerCase();
+  const elemId = layer.elemId ? `#${layer.elemId}` : '';
+  const elemClass = layer.elemClass ? `.${layer.elemClass.split(' ')[0]}` : '';
+  
+  // Capitalize tag for readability
+  const tagName = tag.charAt(0).toUpperCase() + tag.slice(1);
+  
+  if (elemId) return `${tagName}${elemId}`;
+  if (elemClass) return `${tagName}${elemClass}`;
+  return tagName || 'Frame';
 }
 
 // ---------------------------
