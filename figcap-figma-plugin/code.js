@@ -70,16 +70,17 @@ async function importFigcapToFigma(data, options) {
   let minX = 0, minY = 0, maxX = 0, maxY = 0;
 
   if (preservePosition && rects.length) {
-    minX = Math.min(...rects.map(r => r.x));
-    minY = Math.min(...rects.map(r => r.y));
-    maxX = Math.max(...rects.map(r => r.x + r.width));
-    maxY = Math.max(...rects.map(r => r.y + r.height));
+    minX = Math.min.apply(null, rects.map(function(r) { return r.x; }));
+    minY = Math.min.apply(null, rects.map(function(r) { return r.y; }));
+    maxX = Math.max.apply(null, rects.map(function(r) { return r.x + r.width; }));
+    maxY = Math.max.apply(null, rects.map(function(r) { return r.y + r.height; }));
     containerWidth = Math.max(1, maxX - minX);
     containerHeight = Math.max(1, maxY - minY);
   } else {
     // Stack mode
     const gap = 80;
-    containerWidth = Math.max(1, ...selections.map(s => safeNum(s.rootRect && s.rootRect.width, 1)));
+    var widths = selections.map(function(s) { return safeNum(s.rootRect && s.rootRect.width, 1); });
+    containerWidth = Math.max.apply(null, [1].concat(widths));
     containerHeight = Math.max(1,
       selections.reduce((sum, s, i) => sum + safeNum(s.rootRect && s.rootRect.height, 1) + (i ? gap : 0), 0)
     );
@@ -160,7 +161,7 @@ async function importSelection(parentFrame, sel, pos, options) {
   let rects = 0;
   let texts = 0;
 
-  const layers = Array.isArray(sel.layers) ? [...sel.layers] : [];
+  const layers = Array.isArray(sel.layers) ? sel.layers.slice() : [];
   layers.sort((a, b) => safeNum(a.paintOrder, 0) - safeNum(b.paintOrder, 0));
 
   // Build hierarchy: create Frames for semantic containers
@@ -235,7 +236,8 @@ async function importSelection(parentFrame, sel, pos, options) {
     const b = normalizeBounds(layer.bounds);
     if (!b) continue;
 
-    let adjustedLayer = { ...layer };
+    // Create adjusted layer without spread syntax (Figma doesn't support it)
+    var adjustedLayer = Object.assign({}, layer);
     if (targetParent !== selFrame) {
       const parentLayer = findLayerForFrame(targetParent, nodeToFigmaFrame, nodeToLayer);
       if (parentLayer && parentLayer.bounds) {
