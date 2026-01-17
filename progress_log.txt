@@ -1,0 +1,2 @@
+2026-01-17
+- Implemented Chrome extension B (figcap-extension): manifest, service worker, sidepanel UI/logic, content script, overlay CSS, and icons.
