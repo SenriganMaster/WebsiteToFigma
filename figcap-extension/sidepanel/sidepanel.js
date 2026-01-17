@@ -249,6 +249,11 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
     return { x: r[0], y: r[1], width: r[2], height: r[3] };
   }
 
+  function normalizeText(raw) {
+    if (!raw) return "";
+    return String(raw).replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
+  }
+
   function decodeStyles(styleRow) {
     const out = {};
     for (let i = 0; i < opts.computedStyles.length; i++) {
@@ -290,7 +295,8 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
       if (!subtree.has(ni)) continue;
 
       const tag = s(nodeName[ni]).toLowerCase();
-      const t = s(texts[i]);
+      const rawText = s(texts[i]);
+      const t = normalizeText(rawText);
       const r = rectObj(bounds[i]);
 
       const rel = { x: r.x - rootRect.x, y: r.y - rootRect.y, width: r.width, height: r.height };
@@ -301,6 +307,7 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
       // visibility filter
       if (style["display"] === "none" || style["visibility"] === "hidden" || style["opacity"] === "0") continue;
 
+      if (rawText && !t) continue;
       const layerType = t ? "TEXT" : (tag === "img" ? "IMAGE" : "BOX");
 
       layers.push({

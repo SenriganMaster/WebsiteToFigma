@@ -47,6 +47,11 @@
     };
   }
 
+  function normalizeText(raw) {
+    if (!raw) return "";
+    return String(raw).replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
+  }
+
   // ---------------------------
   // Candidate scan
   // ---------------------------
@@ -399,7 +404,7 @@
             if (child.nodeType !== Node.TEXT_NODE) continue;
 
             const raw = child.textContent || "";
-            const text = raw.replace(/\s+/g, " ").trim();
+            const text = normalizeText(raw);
             if (!text) continue;
 
             const textStyle = pickComputedStyle(el);
