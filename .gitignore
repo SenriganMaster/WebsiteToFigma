@@ -1,0 +1,86 @@
+# ===================
+# OS generated files
+# ===================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# ===================
+# Editor / IDE
+# ===================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===================
+# Node.js (if used later)
+# ===================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# ===================
+# Build outputs
+# ===================
+dist/
+build/
+out/
+*.zip
+
+# ===================
+# Environment / secrets
+# ===================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ===================
+# Logs
+# ===================
+logs/
+*.log
+
+# ===================
+# Temporary files
+# ===================
+tmp/
+temp/
+*.tmp
+*.bak
+
+# ===================
+# Chrome Extension specific
+# ===================
+# Packed extension
+*.crx
+*.pem
+
+# ===================
+# Figma Plugin specific
+# ===================
+# Nothing special needed (no build)
+
+# ===================
+# Test outputs
+# ===================
+coverage/
+.nyc_output/
+
+# ===================
+# Downloaded JSONs (user data)
+# ===================
+figcap_*.json
