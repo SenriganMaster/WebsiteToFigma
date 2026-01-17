@@ -202,21 +202,29 @@ async function createRectFromLayer(parent, layer) {
   let imageLoaded = false;
   const imgDataUrl = layer.image && layer.image.dataUrl ? layer.image.dataUrl : "";
   if (imgDataUrl) {
+    console.log('[FigCap] Attempting image import, dataUrl length:', imgDataUrl.length);
     try {
       const bytes = dataUrlToBytes(imgDataUrl);
-      if (bytes) {
+      console.log('[FigCap] Decoded bytes:', bytes ? bytes.length : 'null');
+      if (bytes && bytes.length > 0) {
         const img = figma.createImage(bytes);
+        console.log('[FigCap] Image created, hash:', img.hash);
         rect.fills = [{
           type: 'IMAGE',
           imageHash: img.hash,
           scaleMode: 'FILL'
         }];
         imageLoaded = true;
+        console.log('[FigCap] Image fill applied successfully');
+      } else {
+        console.log('[FigCap] No bytes decoded from dataUrl');
       }
     } catch (e) {
       // Log error for debugging but continue import
-      console.log('Image import failed:', e);
+      console.log('[FigCap] Image import failed:', e.message || e);
     }
+  } else if (String(layer.type || '').toUpperCase() === 'IMAGE') {
+    console.log('[FigCap] IMAGE layer without dataUrl:', layer.image);
   }
 
   // Show placeholder if IMAGE type and image loading failed
@@ -648,11 +656,18 @@ function dataUrlToBytes(dataUrl) {
   const base64Match = s.match(/^data:.*;base64,(.*)$/);
   if (base64Match) {
     const b64 = base64Match[1];
-    const bin = atob(b64);
-    const len = bin.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
-    return bytes;
+    // Use Figma's built-in base64Decode for better stability
+    try {
+      return figma.base64Decode(b64);
+    } catch (e) {
+      console.log('figma.base64Decode failed, using fallback:', e);
+      // Fallback to manual decode
+      const bin = atob(b64);
+      const len = bin.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes;
+    }
   }
 
   const textMatch = s.match(/^data:.*?,(.*)$/);
