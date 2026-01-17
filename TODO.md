@@ -120,6 +120,7 @@
   - [x] `figcap-extension/icons/16.png` (2026-01-17 完了)
   - [x] `figcap-extension/icons/48.png` (2026-01-17 完了)
   - [x] `figcap-extension/icons/128.png` (2026-01-17 完了)
+- [x] Phase 1 実装完了 (2026-01-17 完了)
 
 ---
 
