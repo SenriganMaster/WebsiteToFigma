@@ -153,7 +153,7 @@
 ### 2.4 メインコード（最大のファイル）
 - [x] `figcap-figma-plugin/code.js` 作成 (2026-01-17 完了)
 - [x] Phase 2 実装完了 (2026-01-17 完了)
-- [x] テキスト空白の正規化対応 (作業中)
+- [x] テキスト空白の正規化対応 (2026-01-17 完了)
   - figma.showUI() 呼び出し
   - **figma.ui.onmessage ハンドラ**:
     - CLOSE: figma.closePlugin()
