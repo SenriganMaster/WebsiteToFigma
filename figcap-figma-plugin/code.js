@@ -199,6 +199,7 @@ async function createRectFromLayer(parent, layer) {
   applyBoxStyle(rect, style);
 
   // Image fill if dataUrl is available
+  let imageLoaded = false;
   const imgDataUrl = layer.image && layer.image.dataUrl ? layer.image.dataUrl : "";
   if (imgDataUrl) {
     try {
@@ -210,13 +211,16 @@ async function createRectFromLayer(parent, layer) {
           imageHash: img.hash,
           scaleMode: 'FILL'
         }];
+        imageLoaded = true;
       }
-    } catch (_) {
-      // ignore image failures to keep import running
+    } catch (e) {
+      // Log error for debugging but continue import
+      console.log('Image import failed:', e);
     }
   }
 
-  if (String(layer.type || '').toUpperCase() === 'IMAGE' && !imgDataUrl) {
+  // Show placeholder if IMAGE type and image loading failed
+  if (String(layer.type || '').toUpperCase() === 'IMAGE' && !imageLoaded) {
     await createImagePlaceholder(parent, rect, layer);
   }
 
@@ -235,12 +239,22 @@ async function ensurePlaceholderFont() {
 }
 
 function imageLabelFromLayer(layer) {
-  // Prefer alt text if available
-  const alt = layer.image && layer.image.alt ? String(layer.image.alt).trim() : '';
+  // Prefer alt text if available (check both layer.image and layer.attrs)
+  const alt = (layer.image && layer.image.alt) 
+    ? String(layer.image.alt).trim() 
+    : (layer.attrs && layer.attrs.alt) 
+      ? String(layer.attrs.alt).trim() 
+      : '';
   if (alt) return alt;
 
-  const src = layer.image && layer.image.src ? String(layer.image.src) : '';
+  // Try to get src from layer.image or layer.attrs
+  const src = (layer.image && layer.image.src) 
+    ? String(layer.image.src) 
+    : (layer.attrs && layer.attrs.src) 
+      ? String(layer.attrs.src) 
+      : '';
   if (!src) return '[IMAGE]';
+  
   try {
     const url = new URL(src);
     const path = url.pathname || '';
