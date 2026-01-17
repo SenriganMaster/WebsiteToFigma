@@ -24,6 +24,9 @@
   <div class="row">
     <label><input type="checkbox" id="preserve" checked /> Preserve position (use rootRect.x/y)</label>
   </div>
+  <div class="row">
+    <label><input type="checkbox" id="autoWidth" /> Auto text width (ignore bounds width)</label>
+  </div>
 
   <div class="row">
     <button id="btnImportFile">Import File</button>
@@ -43,6 +46,7 @@
     const $text = document.getElementById('text');
     const $log  = document.getElementById('log');
     const $preserve = document.getElementById('preserve');
+    const $autoWidth = document.getElementById('autoWidth');
 
     function log(...args) {
       $log.textContent += args.join(' ') + "\n";
@@ -57,14 +61,28 @@
       const f = $file.files && $file.files[0];
       if (!f) { log('ERROR: Choose a .json file first.'); return; }
       const jsonText = await f.text();
-      post({ type: 'IMPORT_JSON', jsonText, options: { preservePosition: !!$preserve.checked } });
+      post({
+        type: 'IMPORT_JSON',
+        jsonText,
+        options: {
+          preservePosition: !!$preserve.checked,
+          autoTextWidth: !!$autoWidth.checked
+        }
+      });
       log('Sent file to plugin...');
     }
 
     async function importFromText() {
       const jsonText = ($text.value || '').trim();
       if (!jsonText) { log('ERROR: Paste JSON text first.'); return; }
-      post({ type: 'IMPORT_JSON', jsonText, options: { preservePosition: !!$preserve.checked } });
+      post({
+        type: 'IMPORT_JSON',
+        jsonText,
+        options: {
+          preservePosition: !!$preserve.checked,
+          autoTextWidth: !!$autoWidth.checked
+        }
+      });
       log('Sent text to plugin...');
     }
 

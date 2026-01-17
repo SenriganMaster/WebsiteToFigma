@@ -108,7 +108,7 @@ async function importFigcapToFigma(data, options) {
       const f = await importSelection(container, sel, {
         x: safeNum(sel.rootRect.x, 0) - minX,
         y: safeNum(sel.rootRect.y, 0) - minY
-      });
+      }, options);
       frames += f.frames;
       rectCount += f.rects;
       textCount += f.texts;
@@ -118,7 +118,7 @@ async function importFigcapToFigma(data, options) {
     const gap = 80;
     for (let i = 0; i < selections.length; i++) {
       const sel = selections[i];
-      const f = await importSelection(container, sel, { x: 0, y: yCursor });
+      const f = await importSelection(container, sel, { x: 0, y: yCursor }, options);
       frames += f.frames;
       rectCount += f.rects;
       textCount += f.texts;
@@ -141,7 +141,7 @@ function buildContainerName(page) {
   return `FigCap Import - ${title} (${vw}x${vh})`;
 }
 
-async function importSelection(parentFrame, sel, pos) {
+async function importSelection(parentFrame, sel, pos, options) {
   const selFrame = figma.createFrame();
   selFrame.name = `Selection ${String(sel.id || '').slice(0, 8) || ''}`.trim();
   selFrame.layoutMode = 'NONE';
@@ -168,7 +168,7 @@ async function importSelection(parentFrame, sel, pos) {
     const type = String(layer.type || '').toUpperCase();
 
     if (type === 'TEXT') {
-      const ok = await createTextFromLayer(selFrame, layer);
+      const ok = await createTextFromLayer(selFrame, layer, options);
       if (ok) texts++;
     } else if (type === 'BOX' || type === 'IMAGE') {
       const ok = createRectFromLayer(selFrame, layer);
@@ -286,7 +286,7 @@ function applyBoxStyle(node, style) {
 // ---------------------------
 // Text creation
 // ---------------------------
-async function createTextFromLayer(parent, layer) {
+async function createTextFromLayer(parent, layer, options) {
   const b = normalizeBounds(layer.bounds);
   if (!b) return false;
 
@@ -297,10 +297,10 @@ async function createTextFromLayer(parent, layer) {
   textNode.x = b.x;
   textNode.y = b.y;
 
-  // Ensure fixed bounding box behavior
+  // Size behavior
+  const autoTextWidth = !!(options && options.autoTextWidth);
   try {
-    textNode.textAutoResize = 'NONE';
-    textNode.resize(Math.max(1, b.width), Math.max(1, b.height));
+    textNode.textAutoResize = autoTextWidth ? 'WIDTH_AND_HEIGHT' : 'NONE';
   } catch (_) {}
 
   const style = layer.style || {};
@@ -317,6 +317,18 @@ async function createTextFromLayer(parent, layer) {
 
   // Set characters
   textNode.characters = rawText;
+
+  // Align top to reduce vertical drift
+  try {
+    textNode.textAlignVertical = 'TOP';
+  } catch (_) {}
+
+  // Fixed bounding box after font + characters
+  if (!autoTextWidth) {
+    try {
+      textNode.resize(Math.max(1, b.width), Math.max(1, b.height));
+    } catch (_) {}
+  }
 
   // font size
   const fs = parsePx(style['font-size']);
