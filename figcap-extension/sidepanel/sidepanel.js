@@ -54,8 +54,39 @@ async function ensureContentScript(tabId) {
   }
 }
 
+async function updateHighlight() {
+  if (!currentTabId) return;
+  await chrome.tabs.sendMessage(currentTabId, { type: "FIGCAP_HIGHLIGHT", ids: [...selected] });
+}
+
 function renderList() {
   elList.innerHTML = "";
+  const allIds = candidates.map(c => c.id);
+
+  let cbAll = null;
+  if (candidates.length) {
+    const rowAll = document.createElement("label");
+    rowAll.className = "cand";
+
+    cbAll = document.createElement("input");
+    cbAll.type = "checkbox";
+    cbAll.checked = selected.size === allIds.length;
+    cbAll.indeterminate = selected.size > 0 && selected.size < allIds.length;
+    cbAll.addEventListener("change", async () => {
+      if (cbAll.checked) selected = new Set(allIds);
+      else selected = new Set();
+      await updateHighlight();
+      renderList();
+    });
+
+    const textAll = document.createElement("span");
+    textAll.textContent = `ALL (${allIds.length})`;
+
+    rowAll.appendChild(cbAll);
+    rowAll.appendChild(textAll);
+    elList.appendChild(rowAll);
+  }
+
   for (const c of candidates) {
     const row = document.createElement("label");
     row.className = "cand";
@@ -66,7 +97,11 @@ function renderList() {
     cb.addEventListener("change", async () => {
       if (cb.checked) selected.add(c.id);
       else selected.delete(c.id);
-      await chrome.tabs.sendMessage(currentTabId, { type: "FIGCAP_HIGHLIGHT", ids: [...selected] });
+      await updateHighlight();
+      if (cbAll) {
+        cbAll.checked = selected.size === allIds.length;
+        cbAll.indeterminate = selected.size > 0 && selected.size < allIds.length;
+      }
     });
 
     const text = document.createElement("span");
