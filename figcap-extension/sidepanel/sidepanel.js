@@ -60,6 +60,31 @@ async function updateHighlight() {
   await chrome.tabs.sendMessage(currentTabId, { type: "FIGCAP_HIGHLIGHT", ids: [...selected] });
 }
 
+function parseSrcset(value) {
+  if (!value) return "";
+  const first = String(value).split(",")[0] || "";
+  return first.trim().split(/\s+/)[0] || "";
+}
+
+function resolveUrl(src, baseUrl) {
+  if (!src) return "";
+  if (src.startsWith("data:")) return src;
+  try {
+    return new URL(src, baseUrl || location.href).toString();
+  } catch (_) {
+    return src;
+  }
+}
+
+function pickImageSrcFromAttrs(attrMap, baseUrl) {
+  if (!attrMap) return "";
+  const direct = attrMap.get("src") || attrMap.get("data-src") || attrMap.get("data-original") || attrMap.get("data-lazy-src");
+  if (direct) return resolveUrl(direct, baseUrl);
+  const srcset = attrMap.get("srcset") || attrMap.get("data-srcset");
+  const src = parseSrcset(srcset);
+  return src ? resolveUrl(src, baseUrl) : "";
+}
+
 function renderList() {
   elList.innerHTML = "";
   const allIds = candidates.map(c => c.id);
@@ -120,14 +145,16 @@ function extractFirstUrlFromCssValue(value) {
   return match ? match[2] : "";
 }
 
-async function fetchImageDataUrl(url) {
+async function fetchImageDataUrl(url, baseUrl) {
   if (!url) return null;
-  if (imageCache.has(url)) return imageCache.get(url);
-  if (url.startsWith("data:")) return url;
+  const resolved = resolveUrl(url, baseUrl);
+  if (resolved.startsWith("blob:")) return null;
+  if (imageCache.has(resolved)) return imageCache.get(resolved);
+  if (resolved.startsWith("data:")) return resolved;
 
-  const res = await chrome.runtime.sendMessage({ type: "FIGCAP_FETCH_IMAGE", url });
+  const res = await chrome.runtime.sendMessage({ type: "FIGCAP_FETCH_IMAGE", url: resolved });
   if (res && res.ok && res.dataUrl) {
-    imageCache.set(url, res.dataUrl);
+    imageCache.set(resolved, res.dataUrl);
     return res.dataUrl;
   }
   return null;
@@ -135,6 +162,7 @@ async function fetchImageDataUrl(url) {
 
 async function enrichImageLayers(result) {
   const selections = result && result.selections ? result.selections : [];
+  const pageUrl = result && result.page && result.page.url ? result.page.url : "";
   for (const sel of selections) {
     const layers = Array.isArray(sel.layers) ? sel.layers : [];
     for (const layer of layers) {
@@ -152,7 +180,7 @@ async function enrichImageLayers(result) {
         continue;
       }
 
-      const dataUrl = await fetchImageDataUrl(src);
+      const dataUrl = await fetchImageDataUrl(src, pageUrl);
       if (dataUrl) {
         layer.image = { src, dataUrl };
       }
@@ -355,6 +383,7 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
   }
 
   const selections = [];
+  const pageUrl = opts?.pageMeta?.url || "";
   for (const id of selectedIds) {
     const rootNode = idToNodeIndex.get(id);
     if (rootNode == null) continue;
@@ -404,11 +433,11 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
 
       let imageSrc = "";
       if (tag === "img") {
-        const amap = nodeAttrs.get(ni);
-        if (amap && amap.has("src")) imageSrc = amap.get("src");
+        imageSrc = pickImageSrcFromAttrs(nodeAttrs.get(ni), pageUrl);
       }
       if (!imageSrc && style["background-image"]) {
-        imageSrc = extractFirstUrlFromCssValue(style["background-image"]);
+        const raw = extractFirstUrlFromCssValue(style["background-image"]);
+        imageSrc = resolveUrl(raw, pageUrl);
       }
 
       layers.push({
