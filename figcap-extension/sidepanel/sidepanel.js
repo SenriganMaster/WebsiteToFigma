@@ -214,14 +214,23 @@ function extractFirstUrlFromCssValue(value) {
 async function fetchImageDataUrl(url, baseUrl) {
   if (!url) return null;
   const resolved = resolveUrl(url, baseUrl);
-  if (resolved.startsWith("blob:")) return null;
+  if (resolved.startsWith("blob:")) {
+    console.log("[FigCap] Skip blob URL:", resolved);
+    return null;
+  }
   if (imageCache.has(resolved)) return imageCache.get(resolved);
   if (resolved.startsWith("data:")) return resolved;
 
+  console.log("[FigCap] Requesting image fetch:", resolved);
   const res = await chrome.runtime.sendMessage({ type: "FIGCAP_FETCH_IMAGE", url: resolved });
+  console.log("[FigCap] Fetch response:", res);
+  
   if (res && res.ok && res.dataUrl) {
     imageCache.set(resolved, res.dataUrl);
     return res.dataUrl;
+  }
+  if (res && res.error) {
+    console.log("[FigCap] Fetch error:", res.error);
   }
   return null;
 }
