@@ -48,6 +48,7 @@
 - [x] `figcap-extension/sidepanel/sidepanel.js` 作成 (2026-01-17 完了)
 - [x] 候補リストにALL選択を追加 (2026-01-17 完了)
 - [x] 画像データURL埋め込み（拡張B+プラグインC） (2026-01-17 完了)
+- [x] 画像URLの解決と取得改善 (作業中)
   - 状態管理: currentTabId, candidates, selected, lastScanMeta
   - **ensureContentScript()**: PING確認 → 未注入ならスクリプト注入
   - **btnScan**: FIGCAP_SCAN → 候補リスト描画 → meta保存
