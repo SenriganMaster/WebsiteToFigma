@@ -1,3 +1,4 @@
 2026-01-17
 - Implemented Chrome extension B (figcap-extension): manifest, service worker, sidepanel UI/logic, content script, overlay CSS, and icons.
 - Implemented Figma plugin C (figcap-figma-plugin): manifest, UI, and JSON import logic.
+- Normalized captured text whitespace in extension to avoid phantom spacing.
