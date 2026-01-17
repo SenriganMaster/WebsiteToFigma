@@ -178,6 +178,9 @@ async function importSelection(parentFrame, sel, pos, options) {
   // Second pass: create Frames for semantic/visual containers first
   for (const layer of layers) {
     if (!layer || !layer.bounds) continue;
+    var lt = String(layer.type || '').toUpperCase();
+    // Skip TEXT and IMAGE - they are not containers
+    if (lt === 'TEXT' || lt === 'IMAGE') continue;
     // Only create Frame for meaningful containers (semantic or visual)
     if (!shouldKeepAsFrame(layer)) continue;
     
@@ -223,7 +226,9 @@ async function importSelection(parentFrame, sel, pos, options) {
   // Third pass: create rectangles and text
   for (const layer of layers) {
     if (!layer || !layer.bounds) continue;
-    if (layer.isSemantic) continue; // Already handled as Frame
+    var layerType = String(layer.type || '').toUpperCase();
+    // Skip layers already handled as Frame in second pass (but NOT images - they need image fill)
+    if (shouldKeepAsFrame(layer) && layerType !== 'IMAGE') continue;
     
     const type = String(layer.type || '').toUpperCase();
 
