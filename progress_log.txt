@@ -4,3 +4,4 @@
 - Normalized captured text whitespace in extension to avoid phantom spacing.
 - Added ALL selection in extension candidates list.
 - Added data URL embedding for images (extension) and image fills in Figma plugin.
+- Made image decode failures non-fatal and added non-base64 data URL support.
