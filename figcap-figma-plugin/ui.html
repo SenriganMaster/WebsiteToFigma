@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 12px; }
+    h1 { font-size: 14px; margin: 0 0 8px; }
+    .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+    textarea { width: 100%; height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+    button { padding: 6px 10px; }
+    label { font-size: 12px; }
+    .log { background: #111; color: #eee; padding: 8px; border-radius: 8px; height: 90px; overflow: auto; font-size: 11px; white-space: pre-wrap; }
+    .muted { color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>FigCap C - JSON Import</h1>
+  <div class="muted">Import FigCap B JSON and create Frame/Rect/Text.</div>
+
+  <div class="row">
+    <input id="file" type="file" accept=".json,application/json" />
+  </div>
+
+  <div class="row">
+    <label><input type="checkbox" id="preserve" checked /> Preserve position (use rootRect.x/y)</label>
+  </div>
+
+  <div class="row">
+    <button id="btnImportFile">Import File</button>
+    <button id="btnImportText">Import Text</button>
+    <button id="btnClear">Clear</button>
+    <button id="btnClose">Close</button>
+  </div>
+
+  <div class="row">
+    <textarea id="text" placeholder="Paste JSON here (optional)"></textarea>
+  </div>
+
+  <div id="log" class="log"></div>
+
+  <script>
+    const $file = document.getElementById('file');
+    const $text = document.getElementById('text');
+    const $log  = document.getElementById('log');
+    const $preserve = document.getElementById('preserve');
+
+    function log(...args) {
+      $log.textContent += args.join(' ') + "\n";
+      $log.scrollTop = $log.scrollHeight;
+    }
+
+    function post(msg) {
+      parent.postMessage({ pluginMessage: msg }, '*');
+    }
+
+    async function importFromFile() {
+      const f = $file.files && $file.files[0];
+      if (!f) { log('ERROR: Choose a .json file first.'); return; }
+      const jsonText = await f.text();
+      post({ type: 'IMPORT_JSON', jsonText, options: { preservePosition: !!$preserve.checked } });
+      log('Sent file to plugin...');
+    }
+
+    async function importFromText() {
+      const jsonText = ($text.value || '').trim();
+      if (!jsonText) { log('ERROR: Paste JSON text first.'); return; }
+      post({ type: 'IMPORT_JSON', jsonText, options: { preservePosition: !!$preserve.checked } });
+      log('Sent text to plugin...');
+    }
+
+    document.getElementById('btnImportFile').onclick = () => importFromFile();
+    document.getElementById('btnImportText').onclick = () => importFromText();
+    document.getElementById('btnClear').onclick = () => { $text.value = ''; $log.textContent = ''; };
+    document.getElementById('btnClose').onclick = () => post({ type: 'CLOSE' });
+
+    onmessage = (event) => {
+      const msg = event.data && event.data.pluginMessage;
+      if (!msg) return;
+
+      if (msg.type === 'IMPORT_RESULT') {
+        if (msg.ok) {
+          log('OK:', `frames=${msg.frames}`, `rects=${msg.rects}`, `texts=${msg.texts}`);
+        } else {
+          log('ERROR:', msg.error || 'unknown');
+        }
+      }
+    };
+
+    log('Ready.');
+  </script>
+</body>
+</html>
