@@ -85,6 +85,72 @@ function pickImageSrcFromAttrs(attrMap, baseUrl) {
   return src ? resolveUrl(src, baseUrl) : "";
 }
 
+function buildClipFromLayer(sel, layer) {
+  if (!sel || !layer || !layer.bounds || !sel.rootRect) return null;
+  const b = layer.bounds;
+  const root = sel.rootRect;
+  const x = root.x + b.x;
+  const y = root.y + b.y;
+  const width = b.width;
+  const height = b.height;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) return null;
+  if (width < 2 || height < 2) return null;
+  const maxArea = 3_000_000;
+  if (width * height > maxArea) return null;
+  return { x, y, width, height, scale: 1 };
+}
+
+async function captureImageClipsViaCDP(tabId, result) {
+  const selections = result && result.selections ? result.selections : [];
+  const targets = [];
+
+  for (const sel of selections) {
+    const layers = Array.isArray(sel.layers) ? sel.layers : [];
+    for (const layer of layers) {
+      const hasImageSrc = layer.image && layer.image.src;
+      const hasDataUrl = layer.image && layer.image.dataUrl;
+      if (!hasImageSrc || hasDataUrl) continue;
+      const clip = buildClipFromLayer(sel, layer);
+      if (!clip) continue;
+      targets.push({ layer, clip });
+    }
+  }
+
+  const maxTargets = 40;
+  const list = targets.slice(0, maxTargets);
+  if (!list.length) return;
+
+  await chrome.debugger.attach({ tabId }, "1.3");
+  try {
+    for (const t of list) {
+      const clip = t.clip;
+      let res = null;
+      try {
+        res = await chrome.debugger.sendCommand(
+          { tabId },
+          "Page.captureScreenshot",
+          { format: "png", clip, captureBeyondViewport: true }
+        );
+      } catch (_) {
+        try {
+          res = await chrome.debugger.sendCommand(
+            { tabId },
+            "Page.captureScreenshot",
+            { format: "png", clip }
+          );
+        } catch (_) {
+          res = null;
+        }
+      }
+      if (res && res.data) {
+        t.layer.image = { src: t.layer.image.src, dataUrl: `data:image/png;base64,${res.data}` };
+      }
+    }
+  } finally {
+    await chrome.debugger.detach({ tabId });
+  }
+}
+
 function renderList() {
   elList.innerHTML = "";
   const allIds = candidates.map(c => c.id);
@@ -277,6 +343,11 @@ btnCapture.addEventListener("click", async () => {
     await enrichImageLayers(result);
   } catch (e) {
     log("Image enrich failed:", String(e));
+  }
+  try {
+    await captureImageClipsViaCDP(currentTabId, result);
+  } catch (e) {
+    log("Image clip capture failed:", String(e));
   }
 
   await downloadJSON(result);
