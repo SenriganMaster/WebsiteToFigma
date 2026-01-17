@@ -171,7 +171,7 @@ async function importSelection(parentFrame, sel, pos, options) {
       const ok = await createTextFromLayer(selFrame, layer, options);
       if (ok) texts++;
     } else if (type === 'BOX' || type === 'IMAGE') {
-      const ok = createRectFromLayer(selFrame, layer);
+      const ok = await createRectFromLayer(selFrame, layer);
       if (ok) rects++;
     } else {
       // ignore unknown
@@ -184,7 +184,7 @@ async function importSelection(parentFrame, sel, pos, options) {
 // ---------------------------
 // Rectangle creation
 // ---------------------------
-function createRectFromLayer(parent, layer) {
+async function createRectFromLayer(parent, layer) {
   const b = normalizeBounds(layer.bounds);
   if (!b) return false;
 
@@ -216,10 +216,70 @@ function createRectFromLayer(parent, layer) {
     }
   }
 
+  if (String(layer.type || '').toUpperCase() === 'IMAGE' && !imgDataUrl) {
+    await createImagePlaceholder(parent, rect, layer);
+  }
+
   // name for debugging
   rect.name = `Rect ${String(layer.tag || '')}`.trim();
 
   return true;
+}
+
+let placeholderFontPromise = null;
+async function ensurePlaceholderFont() {
+  if (!placeholderFontPromise) {
+    placeholderFontPromise = figma.loadFontAsync({ family: 'Inter', style: 'Regular' });
+  }
+  await placeholderFontPromise;
+}
+
+function imageLabelFromLayer(layer) {
+  const src = layer.image && layer.image.src ? String(layer.image.src) : '';
+  if (!src) return 'IMAGE';
+  try {
+    const url = new URL(src);
+    const path = url.pathname || '';
+    const name = path.split('/').filter(Boolean).pop() || url.hostname || 'IMAGE';
+    return decodeURIComponent(name);
+  } catch (_) {
+    const parts = src.split('/').filter(Boolean);
+    return parts[parts.length - 1] || 'IMAGE';
+  }
+}
+
+async function createImagePlaceholder(parent, rect, layer) {
+  try {
+    await ensurePlaceholderFont();
+  } catch (_) {
+    return;
+  }
+
+  const label = imageLabelFromLayer(layer);
+  const textNode = figma.createText();
+  parent.appendChild(textNode);
+
+  textNode.x = rect.x;
+  textNode.y = rect.y;
+
+  try {
+    textNode.textAutoResize = 'NONE';
+    textNode.resize(Math.max(1, rect.width), Math.max(1, rect.height));
+  } catch (_) {}
+
+  textNode.fontName = { family: 'Inter', style: 'Regular' };
+  textNode.characters = label;
+  textNode.textAlignHorizontal = 'CENTER';
+  textNode.textAlignVertical = 'CENTER';
+  textNode.fills = [{
+    type: 'SOLID',
+    color: { r: 0.45, g: 0.45, b: 0.45 },
+    opacity: 1
+  }];
+
+  const size = clamp(Math.min(rect.width, rect.height) / 6, 10, 18);
+  textNode.fontSize = size;
+  textNode.name = 'Image Placeholder';
 }
 
 function applyBoxStyle(node, style) {
