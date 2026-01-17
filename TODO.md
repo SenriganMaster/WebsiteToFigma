@@ -127,10 +127,10 @@
 ## 🎯 Phase 2: FigmaプラグインC（figcap-figma-plugin）
 
 ### 2.1 ディレクトリ構造作成
-- [x] `figcap-figma-plugin/` フォルダ作成 (作業中)
+- [x] `figcap-figma-plugin/` フォルダ作成 (2026-01-17 完了)
 
 ### 2.2 manifest.json
-- [ ] `figcap-figma-plugin/manifest.json` 作成
+- [x] `figcap-figma-plugin/manifest.json` 作成 (2026-01-17 完了)
   - name: "FigCap C (JSON -> Figma)"
   - id: ローカル開発用ID
   - api: "1.0.0"
@@ -139,7 +139,7 @@
   - editorType: ["figma"]
 
 ### 2.3 UI
-- [ ] `figcap-figma-plugin/ui.html` 作成
+- [x] `figcap-figma-plugin/ui.html` 作成 (2026-01-17 完了)
   - JSONファイル選択 input[type=file]
   - Preserve position チェックボックス
   - Import File / Import Text / Clear / Close ボタン
@@ -151,7 +151,8 @@
     - onmessage: IMPORT_RESULT受信→ログ表示
 
 ### 2.4 メインコード（最大のファイル）
-- [ ] `figcap-figma-plugin/code.js` 作成
+- [x] `figcap-figma-plugin/code.js` 作成 (2026-01-17 完了)
+- [x] Phase 2 実装完了 (2026-01-17 完了)
   - figma.showUI() 呼び出し
   - **figma.ui.onmessage ハンドラ**:
     - CLOSE: figma.closePlugin()
