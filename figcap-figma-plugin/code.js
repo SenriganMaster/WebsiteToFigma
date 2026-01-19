@@ -166,33 +166,21 @@ async function importSelection(parentFrame, sel, pos, options) {
   layers.sort(function(a, b) { return safeNum(a.paintOrder, 0) - safeNum(b.paintOrder, 0); });
   layers = compressWrappers(layers);
 
-  // Build maps for hierarchy and grouping
-  var nodeToLayer = new Map();
-  var childrenMap = new Map();
-  for (var i = 0; i < layers.length; i++) {
-    var l = layers[i];
-    if (!l) continue;
-    nodeToLayer.set(l.nodeIndex, l);
-    childrenMap.set(l.nodeIndex, []);
-  }
-  for (var j = 0; j < layers.length; j++) {
-    var c = layers[j];
-    if (!c) continue;
-    if (c.parentNodeIndex != null && childrenMap.has(c.parentNodeIndex)) {
-      childrenMap.get(c.parentNodeIndex).push(c);
+  // Build hierarchy: create Frames for semantic containers
+  const nodeToFigmaFrame = new Map(); // nodeIndex -> Figma Frame
+  const nodeToLayer = new Map(); // nodeIndex -> layer data
+  
+  // First pass: index all layers by nodeIndex
+  for (const layer of layers) {
+    if (layer.nodeIndex != null) {
+      nodeToLayer.set(layer.nodeIndex, layer);
     }
   }
 
-  // Build hierarchy: create Frames for semantic containers
-  const nodeToFigmaFrame = new Map(); // nodeIndex -> Figma Frame
-
-  // Second pass: create Frames for semantic containers + card候補
-  for (var s = 0; s < layers.length; s++) {
-    var layer = layers[s];
+  // Second pass: create Frames for semantic containers first
+  for (const layer of layers) {
     if (!layer || !layer.bounds) continue;
-
-    var frameCandidate = layer.isSemantic || isCardCandidate(layer, childrenMap, nodeToLayer);
-    if (!frameCandidate) continue;
+    if (!layer.isSemantic) continue;
     
     const b = normalizeBounds(layer.bounds);
     if (!b) continue;
@@ -234,10 +222,9 @@ async function importSelection(parentFrame, sel, pos, options) {
   }
 
   // Third pass: create rectangles and text
-  for (var t = 0; t < layers.length; t++) {
-    var layer = layers[t];
+  for (const layer of layers) {
     if (!layer || !layer.bounds) continue;
-    if (layer.isSemantic || isCardCandidate(layer, childrenMap, nodeToLayer)) continue; // Already handled as Frame
+    if (layer.isSemantic) continue; // Already handled as Frame
     
     const type = String(layer.type || '').toUpperCase();
 
@@ -286,25 +273,20 @@ function compressWrappers(layers) {
   var nodeToLayer = new Map();
   var children = new Map();
 
-  function rebuildMaps(activeLayers) {
-    nodeToLayer = new Map();
-    children = new Map();
-    for (var i = 0; i < activeLayers.length; i++) {
-      var layer = activeLayers[i];
-      if (!layer) continue;
-      nodeToLayer.set(layer.nodeIndex, layer);
-      children.set(layer.nodeIndex, []);
-    }
-    for (var j = 0; j < activeLayers.length; j++) {
-      var l = activeLayers[j];
-      if (!l) continue;
-      if (l.parentNodeIndex != null && children.has(l.parentNodeIndex)) {
-        children.get(l.parentNodeIndex).push(l);
-      }
-    }
+  for (var i = 0; i < layers.length; i++) {
+    var layer = layers[i];
+    if (!layer) continue;
+    nodeToLayer.set(layer.nodeIndex, layer);
+    children.set(layer.nodeIndex, []);
   }
 
-  rebuildMaps(layers);
+  for (var j = 0; j < layers.length; j++) {
+    var l = layers[j];
+    if (!l) continue;
+    if (l.parentNodeIndex != null && children.has(l.parentNodeIndex)) {
+      children.get(l.parentNodeIndex).push(l);
+    }
+  }
 
   var changed = true;
   var guard = 0;
@@ -319,9 +301,6 @@ function compressWrappers(layers) {
       // 条件: BOX かつ 非セマンティック
       if (String(w.type || '').toUpperCase() !== 'BOX') continue;
       if (w.isSemantic) continue;
-
-      // すでにカード候補なら潰さない
-      if (isCardCandidate(w, children, nodeToLayer)) continue;
 
       var kids = children.get(w.nodeIndex) || [];
       if (kids.length !== 1) continue;
@@ -352,14 +331,25 @@ function compressWrappers(layers) {
     }
 
     if (changed) {
+      // 再構築
+      nodeToLayer = new Map();
+      children = new Map();
       var newLayers = [];
       for (var m = 0; m < layers.length; m++) {
         var item = layers[m];
         if (!item) continue;
         newLayers.push(item);
+        nodeToLayer.set(item.nodeIndex, item);
+        children.set(item.nodeIndex, []);
+      }
+      for (var n = 0; n < newLayers.length; n++) {
+        var it = newLayers[n];
+        if (!it) continue;
+        if (it.parentNodeIndex != null && children.has(it.parentNodeIndex)) {
+          children.get(it.parentNodeIndex).push(it);
+        }
       }
       layers = newLayers;
-      rebuildMaps(layers);
     }
   }
 
@@ -393,40 +383,6 @@ function hasVisualStyle(style) {
   // opacity
   var op = parseFloatSafe(style['opacity']);
   if (isFiniteNumber(op) && op < 1) return true;
-
-  return false;
-}
-
-function isCardCandidate(layer, childrenMap, nodeToLayer) {
-  if (!layer) return false;
-  if (String(layer.type || '').toUpperCase() !== 'BOX') return false;
-  if (layer.isSemantic) return false;
-
-  var kids = (childrenMap && childrenMap.get(layer.nodeIndex)) || [];
-  if (!kids.length) return false;
-
-  // classヒント
-  var cls = (layer.elemClass || '').toLowerCase();
-  var cardHints = ['card', 'item', 'product', 'entry', 'tile', 'cell', 'list', 'block', 'box'];
-  for (var i = 0; i < cardHints.length; i++) {
-    if (cls.indexOf(cardHints[i]) >= 0) return true;
-  }
-
-  // 子のタイプ判定（画像 + テキストが混在）
-  var hasImg = false;
-  var hasTxt = false;
-  for (var j = 0; j < kids.length; j++) {
-    var kt = String(kids[j].type || '').toUpperCase();
-    if (kt === 'IMAGE') hasImg = true;
-    if (kt === 'TEXT') hasTxt = true;
-  }
-  if (hasImg && hasTxt) return true;
-
-  // 見た目を持つコンテナ
-  if (hasVisualStyle(layer.style)) return true;
-
-  // 複数子を持つコンテナ（カード候補）
-  if (kids.length >= 2) return true;
 
   return false;
 }
@@ -477,16 +433,66 @@ function findLayerForFrame(frame, nodeToFigmaFrame, nodeToLayer) {
 
 // Build a descriptive name for a layer
 function buildLayerName(layer) {
-  const tag = String(layer.tag || '').toLowerCase();
-  const elemId = layer.elemId ? `#${layer.elemId}` : '';
-  const elemClass = layer.elemClass ? `.${layer.elemClass.split(' ')[0]}` : '';
-  
-  // Capitalize tag for readability
-  const tagName = tag.charAt(0).toUpperCase() + tag.slice(1);
-  
-  if (elemId) return `${tagName}${elemId}`;
-  if (elemClass) return `${tagName}${elemClass}`;
+  var tag = String(layer.tag || '').toLowerCase();
+  var type = String(layer.type || '').toUpperCase();
+  var idPart = layer.elemId ? ('#' + layer.elemId) : '';
+  var cls = primaryClassName(layer.elemClass);
+  var clsPart = cls ? ('.' + cls) : '';
+
+  // Text naming優先
+  if (type === 'TEXT') {
+    var txt = layer.text ? summarizeText(layer.text) : '';
+    if (txt) return 'Text: ' + txt;
+    return 'Text';
+  }
+
+  // Image naming
+  if (type === 'IMAGE') {
+    var label = '';
+    if (layer.image && layer.image.alt) label = layer.image.alt;
+    else if (layer.image && layer.image.src) label = fileNameFromUrl(layer.image.src);
+    if (label) return 'Image: ' + label;
+    return 'Image';
+  }
+
+  // Semantic frames keep tag-based name
+  var tagName = tag ? (tag.charAt(0).toUpperCase() + tag.slice(1)) : 'Frame';
+  if (idPart) return tagName + idPart;
+  if (clsPart) return tagName + clsPart;
   return tagName || 'Frame';
+}
+
+function primaryClassName(elemClass) {
+  if (!elemClass) return '';
+  var ignore = ['container', 'wrap', 'inner', 'clearfix', 'flex', 'grid', 'row', 'col', 'col-12', 'col-6', 'col-sm', 'col-md', 'col-lg', 'sm', 'md', 'lg', 'xl', 'xxl', 'xs'];
+  var parts = String(elemClass).split(/\s+/).filter(Boolean);
+  for (var i = 0; i < parts.length; i++) {
+    var c = parts[i];
+    if (ignore.indexOf(c.toLowerCase()) >= 0) continue;
+    return c;
+  }
+  return parts.length ? parts[0] : '';
+}
+
+function summarizeText(text) {
+  var s = String(text || '').trim();
+  if (!s) return '';
+  var max = 24;
+  if (s.length <= max) return s;
+  return s.slice(0, max) + '…';
+}
+
+function fileNameFromUrl(src) {
+  try {
+    var url = new URL(src);
+    var path = url.pathname || '';
+    var name = path.split('/').filter(Boolean).pop() || '';
+    if (!name) name = url.hostname || '';
+    return decodeURIComponent(name);
+  } catch (_) {
+    var parts = String(src || '').split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : '';
+  }
 }
 
 // ---------------------------
@@ -540,8 +546,8 @@ async function createRectFromLayer(parent, layer) {
     await createImagePlaceholder(parent, rect, layer);
   }
 
-  // name for debugging
-  rect.name = `Rect ${String(layer.tag || '')}`.trim();
+  // name
+  rect.name = buildLayerName(layer);
 
   return true;
 }
@@ -800,7 +806,7 @@ async function createTextFromLayer(parent, layer, options) {
   const op = parseFloatSafe(style['opacity']);
   if (isFiniteNumber(op)) textNode.opacity = clamp(op, 0, 1);
 
-  textNode.name = 'Text';
+  textNode.name = buildLayerName(layer);
 
   return true;
 }
