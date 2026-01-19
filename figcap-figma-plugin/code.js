@@ -185,14 +185,6 @@ async function importSelection(parentFrame, sel, pos, options) {
 
   // Build hierarchy: create Frames for semantic containers
   const nodeToFigmaFrame = new Map(); // nodeIndex -> Figma Frame
-  const nodeToLayer = new Map(); // nodeIndex -> layer data
-  
-  // First pass: index all layers by nodeIndex
-  for (const layer of layers) {
-    if (layer.nodeIndex != null) {
-      nodeToLayer.set(layer.nodeIndex, layer);
-    }
-  }
 
   // Second pass: create Frames for semantic containers + card候補
   for (var s = 0; s < layers.length; s++) {
