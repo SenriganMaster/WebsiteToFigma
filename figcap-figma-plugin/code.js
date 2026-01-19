@@ -161,10 +161,12 @@ async function importSelection(parentFrame, sel, pos, options) {
   let rects = 0;
   let texts = 0;
 
-  const layers = Array.isArray(sel.layers) ? sel.layers.slice() : [];
-  layers.sort((a, b) => safeNum(a.paintOrder, 0) - safeNum(b.paintOrder, 0));
+  // Prepare layers (sorted + wrapper圧縮)
+  var layers = Array.isArray(sel.layers) ? sel.layers.slice() : [];
+  layers.sort(function(a, b) { return safeNum(a.paintOrder, 0) - safeNum(b.paintOrder, 0); });
+  layers = compressWrappers(layers);
 
-  // Build hierarchy: create Frames for meaningful containers
+  // Build hierarchy: create Frames for semantic containers
   const nodeToFigmaFrame = new Map(); // nodeIndex -> Figma Frame
   const nodeToLayer = new Map(); // nodeIndex -> layer data
   
@@ -175,14 +177,10 @@ async function importSelection(parentFrame, sel, pos, options) {
     }
   }
 
-  // Second pass: create Frames for semantic/visual containers first
+  // Second pass: create Frames for semantic containers first
   for (const layer of layers) {
     if (!layer || !layer.bounds) continue;
-    var lt = String(layer.type || '').toUpperCase();
-    // Skip TEXT and IMAGE - they are not containers
-    if (lt === 'TEXT' || lt === 'IMAGE') continue;
-    // Only create Frame for meaningful containers (semantic or visual)
-    if (!shouldKeepAsFrame(layer)) continue;
+    if (!layer.isSemantic) continue;
     
     const b = normalizeBounds(layer.bounds);
     if (!b) continue;
@@ -226,9 +224,7 @@ async function importSelection(parentFrame, sel, pos, options) {
   // Third pass: create rectangles and text
   for (const layer of layers) {
     if (!layer || !layer.bounds) continue;
-    var layerType = String(layer.type || '').toUpperCase();
-    // Skip layers already handled as Frame in second pass (but NOT images - they need image fill)
-    if (shouldKeepAsFrame(layer) && layerType !== 'IMAGE') continue;
+    if (layer.isSemantic) continue; // Already handled as Frame
     
     const type = String(layer.type || '').toUpperCase();
 
@@ -266,6 +262,138 @@ async function importSelection(parentFrame, sel, pos, options) {
   }
 
   return { frames, rects, texts };
+}
+
+// ----------------------------------------
+// Wrapper圧縮ロジック
+// ----------------------------------------
+function compressWrappers(layers) {
+  if (!layers || !layers.length) return layers;
+
+  var nodeToLayer = new Map();
+  var children = new Map();
+
+  for (var i = 0; i < layers.length; i++) {
+    var layer = layers[i];
+    if (!layer) continue;
+    nodeToLayer.set(layer.nodeIndex, layer);
+    children.set(layer.nodeIndex, []);
+  }
+
+  for (var j = 0; j < layers.length; j++) {
+    var l = layers[j];
+    if (!l) continue;
+    if (l.parentNodeIndex != null && children.has(l.parentNodeIndex)) {
+      children.get(l.parentNodeIndex).push(l);
+    }
+  }
+
+  var changed = true;
+  var guard = 0;
+  while (changed && guard < 5) { // 深すぎないようガード
+    changed = false;
+    guard++;
+
+    for (var k = 0; k < layers.length; k++) {
+      var w = layers[k];
+      if (!w) continue;
+
+      // 条件: BOX かつ 非セマンティック
+      if (String(w.type || '').toUpperCase() !== 'BOX') continue;
+      if (w.isSemantic) continue;
+
+      var kids = children.get(w.nodeIndex) || [];
+      if (kids.length !== 1) continue;
+
+      // 見た目なしの薄いラッパー判定
+      if (hasVisualStyle(w.style)) continue;
+      if (w.image && (w.image.dataUrl || w.image.src)) continue;
+
+      // サイズがほぼ同じ & 子が1つだけ
+      var child = kids[0];
+      if (!w.bounds || !child.bounds) continue;
+      if (!isBoundsSimilar(w.bounds, child.bounds, 2)) continue;
+
+      // 親を付け替え
+      var parentIdx = w.parentNodeIndex != null ? w.parentNodeIndex : null;
+      child.parentNodeIndex = parentIdx;
+
+      // 親childrenを更新
+      if (parentIdx != null && children.has(parentIdx)) {
+        children.get(parentIdx).push(child);
+      }
+
+      // wrapper自身を除去
+      children.delete(w.nodeIndex);
+      nodeToLayer.delete(w.nodeIndex);
+      layers[k] = null;
+      changed = true;
+    }
+
+    if (changed) {
+      // 再構築
+      nodeToLayer = new Map();
+      children = new Map();
+      var newLayers = [];
+      for (var m = 0; m < layers.length; m++) {
+        var item = layers[m];
+        if (!item) continue;
+        newLayers.push(item);
+        nodeToLayer.set(item.nodeIndex, item);
+        children.set(item.nodeIndex, []);
+      }
+      for (var n = 0; n < newLayers.length; n++) {
+        var it = newLayers[n];
+        if (!it) continue;
+        if (it.parentNodeIndex != null && children.has(it.parentNodeIndex)) {
+          children.get(it.parentNodeIndex).push(it);
+        }
+      }
+      layers = newLayers;
+    }
+  }
+
+  return layers;
+}
+
+function hasVisualStyle(style) {
+  if (!style) return false;
+
+  // background-color
+  var bg = parseCSSColor(style['background-color']);
+  if (bg && bg.a > 0) return true;
+
+  // background-image
+  var bgImg = String(style['background-image'] || '').trim();
+  if (bgImg && bgImg !== 'none') return true;
+
+  // border
+  var bt = parsePx(style['border-top-width']);
+  var br = parsePx(style['border-right-width']);
+  var bb = parsePx(style['border-bottom-width']);
+  var bl = parsePx(style['border-left-width']);
+  if ((isFiniteNumber(bt) && bt > 0) || (isFiniteNumber(br) && br > 0) || (isFiniteNumber(bb) && bb > 0) || (isFiniteNumber(bl) && bl > 0)) {
+    return true;
+  }
+
+  // box-shadow
+  var shadow = String(style['box-shadow'] || '').trim();
+  if (shadow && shadow !== 'none') return true;
+
+  // opacity
+  var op = parseFloatSafe(style['opacity']);
+  if (isFiniteNumber(op) && op < 1) return true;
+
+  return false;
+}
+
+function isBoundsSimilar(a, b, tolerance) {
+  var t = isFiniteNumber(tolerance) ? tolerance : 0;
+  var dx = Math.abs(safeNum(a.x, 0) - safeNum(b.x, 0));
+  var dy = Math.abs(safeNum(a.y, 0) - safeNum(b.y, 0));
+  var dw = Math.abs(safeNum(a.width, 0) - safeNum(b.width, 0));
+  var dh = Math.abs(safeNum(a.height, 0) - safeNum(b.height, 0));
+  return dx <= t && dy <= t && dw <= t && dh <= t;
 }
 
 // Find the closest semantic parent frame for a layer
@@ -306,69 +434,15 @@ function findLayerForFrame(frame, nodeToFigmaFrame, nodeToLayer) {
 // Build a descriptive name for a layer
 function buildLayerName(layer) {
   const tag = String(layer.tag || '').toLowerCase();
-  const elemId = layer.elemId ? '#' + layer.elemId : '';
-  const elemClass = layer.elemClass ? '.' + layer.elemClass.split(' ')[0] : '';
+  const elemId = layer.elemId ? `#${layer.elemId}` : '';
+  const elemClass = layer.elemClass ? `.${layer.elemClass.split(' ')[0]}` : '';
   
   // Capitalize tag for readability
   const tagName = tag.charAt(0).toUpperCase() + tag.slice(1);
   
-  if (elemId) return tagName + elemId;
-  if (elemClass) return tagName + elemClass;
+  if (elemId) return `${tagName}${elemId}`;
+  if (elemClass) return `${tagName}${elemClass}`;
   return tagName || 'Frame';
-}
-
-// Determine if a layer should be kept as a Frame (not collapsed)
-function shouldKeepAsFrame(layer) {
-  // Always keep semantic containers
-  if (layer.isSemantic) return true;
-  
-  var style = layer.style || {};
-  
-  // Keep if has background color (not transparent)
-  var bgColor = style['background-color'] || '';
-  if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
-    return true;
-  }
-  
-  // Keep if has background image
-  var bgImage = style['background-image'] || '';
-  if (bgImage && bgImage !== 'none' && bgImage !== '') {
-    return true;
-  }
-  
-  // Keep if has border
-  var bt = parsePx(style['border-top-width']);
-  var br = parsePx(style['border-right-width']);
-  var bb = parsePx(style['border-bottom-width']);
-  var bl = parsePx(style['border-left-width']);
-  if ((bt && bt > 0) || (br && br > 0) || (bb && bb > 0) || (bl && bl > 0)) {
-    return true;
-  }
-  
-  // Keep if has box-shadow
-  var shadow = style['box-shadow'] || '';
-  if (shadow && shadow !== 'none' && shadow !== '') {
-    return true;
-  }
-  
-  // Keep if has border-radius (visual clip)
-  var rTL = parsePx(style['border-top-left-radius']);
-  var rTR = parsePx(style['border-top-right-radius']);
-  var rBR = parsePx(style['border-bottom-right-radius']);
-  var rBL = parsePx(style['border-bottom-left-radius']);
-  if ((rTL && rTL > 0) || (rTR && rTR > 0) || (rBR && rBR > 0) || (rBL && rBL > 0)) {
-    return true;
-  }
-  
-  // Keep form elements
-  var tag = String(layer.tag || '').toLowerCase();
-  var formTags = ['input', 'textarea', 'button', 'select', 'form'];
-  if (formTags.indexOf(tag) >= 0) {
-    return true;
-  }
-  
-  // Otherwise, collapse this wrapper
-  return false;
 }
 
 // ---------------------------
