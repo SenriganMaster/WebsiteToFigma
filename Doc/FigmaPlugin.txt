@@ -1,901 +1,158 @@
-FigmaプラグインC「FigCap Import（JSON→Frame/Rect/Text）」開発指示書（統合版 / コピペで実装完走用）
+# FigmaプラグインC 最終ドキュメント（引き継ぎ用）
 
-対象読者：今回の議論を知らないが実装能力の高いAI（または開発者）
-目的：この指示書だけで、JSONを読み込み、Figma上にFrame/Rect/Textを生成するプラグインが実装でき、想定どおり動作すること
+対象：次の開発者/AI がこれだけで把握できるようにする  
+目的：拡張Bが出力するJSONをFigmaで再構築（Frame/Rect/Text/Image）し、可能な範囲で自動レイアウト・命名を行う
 
-定義
-何を作るか（プラグインCの目的）
+---
 
-Chrome拡張B（FigCap B）が出力する JSON（version: 1）をFigma内で読み込み、以下を生成する：
+## 0. ゴールと現状の完成度
+- 拡張BのJSON（v1）を読み込み、Figma上にフレーム/矩形/テキスト/画像を生成
+- テキストは正規化済み・Auto Text Width デフォルトON
+- 画像はdataURL埋め込みに対応、失敗時はプレースホルダー表示
+- セマンティックタグをFrame化、不要ラッパーを圧縮
+- Flex row/column で安全に当てられる範囲のみAuto Layoutを自動適用
+- レイヤー命名を改善（Text/Image/Tag#id/.class）
 
-Frame：selections[] ごとに 1つ（= セクション単位）
+---
 
-Rectangle：layers[] の type: "BOX"（および "IMAGE" を最小実装ではRect扱い）を矩形として再現
-
-Text：layers[] の type: "TEXT" をテキストとして再現
-
-前提（JSON入力）
-
-拡張Bが出力するJSONは概ね次の形：
-
-page: URL / title / viewport / scroll
-
-selections[]: id, rootRect, layers[]
-
-layers[]: type, bounds（rootRect相対）, text, style, paintOrder
-
-要点（MUST/SHOULD）
-MUST
-
-UIで JSONファイル（.json）を選択して読み込める
-
-もしくは JSONテキスト貼り付けでも読み込める（ファイル選択が面倒な場合の保険）
-
-読み込み成功で、Figma上に Frame/Rectangle/Text を生成する
-
-生成後、作成物を選択して viewport.scrollAndZoomIntoView する（ユーザーが迷子にならない）
-
-JSONパースや必須キー欠落は UIにエラー表示する
-
-SHOULD（推奨）
-
-配置モードを2つ用意
-
-Preserve（Web座標保持）：rootRect.x/y を使って相対配置（選択セクションの相対位置を維持）
-
-Stack（縦積み）：巨大スクロールページで間が空きすぎるのを防ぐ
-
-BOXの background-color / border-radius / border-width&color / box-shadow / opacity を可能な範囲でFigmaに反映
-
-TEXTの font-size / font-weight / line-height / letter-spacing / text-align / color を可能な範囲で反映
-※フォントは環境に依存するので失敗時フォールバック必須
-
-比較（実装方針）
-方針A：ビルド無し（JS直置き）
-
-最短で動く
-
-コピペで完走しやすい
-
-TypeScript型安全は捨てる
-
-方針B：TypeScript + esbuild
-
-保守しやすい
-
-型とLintが効く
-
-ただし導入コスト増
-
-この指示書では 方針A（ビルド無し） で書く（最小で確実に動くのを優先）。
-
-1. ファイル構成（最小）
+## 1. ファイル構成
+```
 figcap-figma-plugin/
-  manifest.json
-  code.js
-  ui.html
+  manifest.json    # main/uiの定義
+  code.js          # メインロジック（Figmaサンドボックス）
+  ui.html          # UI (iframe)
+```
 
-2. manifest.json（最小）
-
-figcap-figma-plugin/manifest.json
-
+### manifest.json（要点）
+```json
 {
   "name": "FigCap C (JSON -> Figma)",
   "id": "figcap-c-json-to-figma-local",
   "api": "1.0.0",
   "main": "code.js",
   "ui": "ui.html",
+  "documentAccess": "dynamic-page",
   "editorType": ["figma"]
 }
-
-
-メモ：
-
-id はローカル開発用途なら任意文字列でOK（被りに注意）
-
-editorType はFigma本体想定（FigJam対応は不要なら外さない）
-
-3. UI（ui.html）
-3.1 UI要件
-
-JSONファイル選択
-
-JSONテキスト貼り付け
-
-Importボタン
-
-Preserve/Stackの配置モード
-
-ログ表示（成功/失敗）
-
-figcap-figma-plugin/ui.html
-
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 12px; }
-    h1 { font-size: 14px; margin: 0 0 8px; }
-    .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
-    textarea { width: 100%; height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
-    button { padding: 6px 10px; }
-    label { font-size: 12px; }
-    .log { background: #111; color: #eee; padding: 8px; border-radius: 8px; height: 90px; overflow: auto; font-size: 11px; white-space: pre-wrap; }
-    .muted { color: #666; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <h1>FigCap C – JSON Import</h1>
-  <div class="muted">Import FigCap B JSON and create Frame/Rect/Text.</div>
-
-  <div class="row">
-    <input id="file" type="file" accept=".json,application/json" />
-  </div>
-
-  <div class="row">
-    <label><input type="checkbox" id="preserve" checked /> Preserve position (use rootRect.x/y)</label>
-  </div>
-
-  <div class="row">
-    <button id="btnImportFile">Import File</button>
-    <button id="btnImportText">Import Text</button>
-    <button id="btnClear">Clear</button>
-    <button id="btnClose">Close</button>
-  </div>
-
-  <div class="row">
-    <textarea id="text" placeholder='Paste JSON here (optional)'></textarea>
-  </div>
-
-  <div id="log" class="log"></div>
-
-  <script>
-    const $file = document.getElementById('file');
-    const $text = document.getElementById('text');
-    const $log  = document.getElementById('log');
-    const $preserve = document.getElementById('preserve');
-
-    function log(...args) {
-      $log.textContent += args.join(' ') + "\\n";
-      $log.scrollTop = $log.scrollHeight;
-    }
-
-    function post(msg) {
-      parent.postMessage({ pluginMessage: msg }, '*');
-    }
-
-    async function importFromFile() {
-      const f = $file.files && $file.files[0];
-      if (!f) { log('ERROR: Choose a .json file first.'); return; }
-      const jsonText = await f.text();
-      post({ type: 'IMPORT_JSON', jsonText, options: { preservePosition: !!$preserve.checked } });
-      log('Sent file to plugin…');
-    }
-
-    async function importFromText() {
-      const jsonText = ($text.value || '').trim();
-      if (!jsonText) { log('ERROR: Paste JSON text first.'); return; }
-      post({ type: 'IMPORT_JSON', jsonText, options: { preservePosition: !!$preserve.checked } });
-      log('Sent text to plugin…');
-    }
-
-    document.getElementById('btnImportFile').onclick = () => importFromFile();
-    document.getElementById('btnImportText').onclick = () => importFromText();
-    document.getElementById('btnClear').onclick = () => { $text.value = ''; $log.textContent = ''; };
-    document.getElementById('btnClose').onclick = () => post({ type: 'CLOSE' });
-
-    onmessage = (event) => {
-      const msg = event.data && event.data.pluginMessage;
-      if (!msg) return;
-
-      if (msg.type === 'IMPORT_RESULT') {
-        if (msg.ok) {
-          log('OK:', `frames=${msg.frames}`, `rects=${msg.rects}`, `texts=${msg.texts}`);
-        } else {
-          log('ERROR:', msg.error || 'unknown');
-        }
-      }
-    };
-
-    log('Ready.');
-  </script>
-</body>
-</html>
-
-4. メインコード（code.js）
-4.1 実装ポリシー
-
-受け取ったJSONをパース→最小検証
-
-コンテナFrame（import単位）を1つ作る
-
-各 selection を子Frameとして作る
-
-各 layer を paintOrder 昇順で生成（後に作るほど前面＝上に来る）
-
-BOX/IMAGE → Rectangle
-
-TEXT → Text（フォントロード失敗時は Inter にフォールバック）
-
-figcap-figma-plugin/code.js
-
-// FigCap C (JSON -> Figma) - code.js
-// Minimal: Frame + Rectangle + Text
-
-figma.showUI(__html__, { width: 380, height: 420 });
-
-figma.ui.onmessage = async (msg) => {
-  if (!msg || !msg.type) return;
-
-  if (msg.type === 'CLOSE') {
-    figma.closePlugin();
-    return;
-  }
-
-  if (msg.type === 'IMPORT_JSON') {
-    try {
-      const jsonText = String(msg.jsonText || '');
-      const options = msg.options || {};
-      const data = JSON.parse(jsonText);
-
-      validateFigcapJson(data);
-
-      const stats = await importFigcapToFigma(data, options);
-
-      figma.ui.postMessage({ type: 'IMPORT_RESULT', ok: true, ...stats });
-      figma.notify(`Imported: frames=${stats.frames}, rects=${stats.rects}, texts=${stats.texts}`);
-    } catch (e) {
-      figma.ui.postMessage({ type: 'IMPORT_RESULT', ok: false, error: String(e && e.message ? e.message : e) });
-      figma.notify(`Import failed: ${String(e)}`, { error: true });
-    }
-  }
-};
-
-// ---------------------------
-// Validation
-// ---------------------------
-function validateFigcapJson(data) {
-  if (!data || typeof data !== 'object') throw new Error('JSON must be an object');
-  if (data.version !== 1) throw new Error(`Unsupported version: ${data.version}`);
-  if (!Array.isArray(data.selections)) throw new Error('Missing selections[]');
-  for (const sel of data.selections) {
-    if (!sel || typeof sel !== 'object') throw new Error('Invalid selection');
-    if (!sel.rootRect) throw new Error('Selection missing rootRect');
-    if (!Array.isArray(sel.layers)) throw new Error('Selection missing layers[]');
-  }
-}
-
-// ---------------------------
-// Import
-// ---------------------------
-async function importFigcapToFigma(data, options) {
-  const preservePosition = options.preservePosition !== false; // default true
-  const page = data.page || {};
-  const selections = data.selections || [];
-
-  // Collect selection rects
-  const rects = selections
-    .map(s => s.rootRect)
-    .filter(r => r && isFiniteNumber(r.x) && isFiniteNumber(r.y) && isFiniteNumber(r.width) && isFiniteNumber(r.height));
-
-  let containerWidth = 0;
-  let containerHeight = 0;
-
-  // Placement baseline
-  let minX = 0, minY = 0, maxX = 0, maxY = 0;
-
-  if (preservePosition && rects.length) {
-    minX = Math.min(...rects.map(r => r.x));
-    minY = Math.min(...rects.map(r => r.y));
-    maxX = Math.max(...rects.map(r => r.x + r.width));
-    maxY = Math.max(...rects.map(r => r.y + r.height));
-    containerWidth = Math.max(1, maxX - minX);
-    containerHeight = Math.max(1, maxY - minY);
-  } else {
-    // Stack mode
-    const gap = 80;
-    containerWidth = Math.max(1, ...selections.map(s => safeNum(s.rootRect && s.rootRect.width, 1)));
-    containerHeight = Math.max(1,
-      selections.reduce((sum, s, i) => sum + safeNum(s.rootRect && s.rootRect.height, 1) + (i ? gap : 0), 0)
-    );
-  }
-
-  // Create container
-  const container = figma.createFrame();
-  container.name = buildContainerName(page);
-  container.resize(containerWidth, containerHeight);
-  container.layoutMode = 'NONE';
-  container.clipsContent = false;
-
-  // Place container near viewport center
-  const center = figma.viewport.center;
-  container.x = Math.round(center.x - containerWidth / 2);
-  container.y = Math.round(center.y - containerHeight / 2);
-
-  figma.currentPage.appendChild(container);
-
-  let frames = 1;
-  let rectCount = 0;
-  let textCount = 0;
-
-  if (preservePosition && rects.length) {
-    for (const sel of selections) {
-      const f = await importSelection(container, sel, {
-        x: safeNum(sel.rootRect.x, 0) - minX,
-        y: safeNum(sel.rootRect.y, 0) - minY
-      });
-      frames += f.frames;
-      rectCount += f.rects;
-      textCount += f.texts;
-    }
-  } else {
-    let yCursor = 0;
-    const gap = 80;
-    for (let i = 0; i < selections.length; i++) {
-      const sel = selections[i];
-      const f = await importSelection(container, sel, { x: 0, y: yCursor });
-      frames += f.frames;
-      rectCount += f.rects;
-      textCount += f.texts;
-
-      yCursor += safeNum(sel.rootRect && sel.rootRect.height, 0) + gap;
-    }
-  }
-
-  // Select and zoom
-  figma.currentPage.selection = [container];
-  figma.viewport.scrollAndZoomIntoView([container]);
-
-  return { frames, rects: rectCount, texts: textCount };
-}
-
-function buildContainerName(page) {
-  const title = (page && page.title) ? String(page.title) : 'Untitled';
-  const vw = page && page.viewport && isFiniteNumber(page.viewport.innerWidth) ? page.viewport.innerWidth : '?';
-  const vh = page && page.viewport && isFiniteNumber(page.viewport.innerHeight) ? page.viewport.innerHeight : '?';
-  return `FigCap Import — ${title} (${vw}x${vh})`;
-}
-
-async function importSelection(parentFrame, sel, pos) {
-  const selFrame = figma.createFrame();
-  selFrame.name = `Selection ${String(sel.id || '').slice(0, 8) || ''}`.trim();
-  selFrame.layoutMode = 'NONE';
-  selFrame.clipsContent = true;
-  selFrame.fills = []; // transparent
-
-  const w = Math.max(1, safeNum(sel.rootRect && sel.rootRect.width, 1));
-  const h = Math.max(1, safeNum(sel.rootRect && sel.rootRect.height, 1));
-  selFrame.resize(w, h);
-
-  parentFrame.appendChild(selFrame);
-  selFrame.x = Math.round(safeNum(pos.x, 0));
-  selFrame.y = Math.round(safeNum(pos.y, 0));
-
-  let frames = 1;
-  let rects = 0;
-  let texts = 0;
-
-  const layers = Array.isArray(sel.layers) ? [...sel.layers] : [];
-  layers.sort((a, b) => safeNum(a.paintOrder, 0) - safeNum(b.paintOrder, 0));
-
-  for (const layer of layers) {
-    if (!layer || !layer.bounds) continue;
-    const type = String(layer.type || '').toUpperCase();
-
-    if (type === 'TEXT') {
-      const ok = await createTextFromLayer(selFrame, layer);
-      if (ok) texts++;
-    } else if (type === 'BOX' || type === 'IMAGE') {
-      const ok = createRectFromLayer(selFrame, layer);
-      if (ok) rects++;
-    } else {
-      // ignore unknown
-    }
-  }
-
-  return { frames, rects, texts };
-}
-
-// ---------------------------
-// Rectangle creation
-// ---------------------------
-function createRectFromLayer(parent, layer) {
-  const b = normalizeBounds(layer.bounds);
-  if (!b) return false;
-
-  const rect = figma.createRectangle();
-  parent.appendChild(rect);
-
-  rect.x = b.x;
-  rect.y = b.y;
-  rect.resize(Math.max(1, b.width), Math.max(1, b.height));
-
-  const style = layer.style || {};
-  applyBoxStyle(rect, style);
-
-  // name for debugging
-  rect.name = `Rect ${String(layer.tag || '')}`.trim();
-
-  return true;
-}
-
-function applyBoxStyle(node, style) {
-  // opacity
-  const op = parseFloatSafe(style['opacity']);
-  if (isFiniteNumber(op)) node.opacity = clamp(op, 0, 1);
-
-  // fill: background-color
-  const bg = parseCSSColor(style['background-color']);
-  if (bg && bg.a > 0) {
-    node.fills = [{
-      type: 'SOLID',
-      color: { r: bg.r, g: bg.g, b: bg.b },
-      opacity: bg.a
-    }];
-  } else {
-    node.fills = []; // transparent
-  }
-
-  // stroke: uniform only (minimal)
-  const bt = parsePx(style['border-top-width']);
-  const br = parsePx(style['border-right-width']);
-  const bb = parsePx(style['border-bottom-width']);
-  const bl = parsePx(style['border-left-width']);
-  const widths = [bt, br, bb, bl].map(v => (isFiniteNumber(v) ? v : 0));
-
-  const allEqual = widths.every(v => v === widths[0]);
-  const strokeW = allEqual ? widths[0] : 0;
-
-  if (strokeW > 0) {
-    const bc = parseCSSColor(style['border-top-color']) || parseCSSColor(style['border-right-color']) || parseCSSColor(style['border-bottom-color']) || parseCSSColor(style['border-left-color']);
-    const c = bc && bc.a > 0 ? bc : { r: 0, g: 0, b: 0, a: 1 };
-    node.strokes = [{
-      type: 'SOLID',
-      color: { r: c.r, g: c.g, b: c.b },
-      opacity: c.a
-    }];
-    node.strokeWeight = strokeW;
-  } else {
-    node.strokes = [];
-  }
-
-  // border radius (try per-corner)
-  const rTL = parsePx(style['border-top-left-radius']);
-  const rTR = parsePx(style['border-top-right-radius']);
-  const rBR = parsePx(style['border-bottom-right-radius']);
-  const rBL = parsePx(style['border-bottom-left-radius']);
-
-  const rs = [rTL, rTR, rBR, rBL].map(v => (isFiniteNumber(v) ? v : 0));
-  const sameR = rs.every(v => v === rs[0]);
-
-  try {
-    if (sameR) {
-      node.cornerRadius = rs[0];
-    } else {
-      node.topLeftRadius = rs[0];
-      node.topRightRadius = rs[1];
-      node.bottomRightRadius = rs[2];
-      node.bottomLeftRadius = rs[3];
-    }
-  } catch (_) {
-    // if API mismatch, ignore
-  }
-
-  // box-shadow (take first, non-inset)
-  const shadow = parseFirstDropShadow(style['box-shadow']);
-  if (shadow) {
-    node.effects = [{
-      type: 'DROP_SHADOW',
-      color: { r: shadow.color.r, g: shadow.color.g, b: shadow.color.b, a: shadow.color.a },
-      offset: { x: shadow.offsetX, y: shadow.offsetY },
-      radius: shadow.blur,
-      spread: shadow.spread,
-      visible: true,
-      blendMode: 'NORMAL'
-    }];
-  } else {
-    node.effects = [];
-  }
-}
-
-// ---------------------------
-// Text creation
-// ---------------------------
-async function createTextFromLayer(parent, layer) {
-  const b = normalizeBounds(layer.bounds);
-  if (!b) return false;
-
-  const textNode = figma.createText();
-  parent.appendChild(textNode);
-
-  // Geometry first (then characters)
-  textNode.x = b.x;
-  textNode.y = b.y;
-
-  // Ensure fixed bounding box behavior
-  try {
-    textNode.textAutoResize = 'NONE';
-    textNode.resize(Math.max(1, b.width), Math.max(1, b.height));
-  } catch (_) {}
-
-  const style = layer.style || {};
-  const rawText = String(layer.text || '');
-
-  // Font resolve + load (fallback to Inter)
-  const cssFamily = firstFontFamily(style['font-family']);
-  const cssWeight = style['font-weight'];
-  const fontName = await resolveFont(cssFamily, cssWeight);
-
-  // You must load before setting characters/font properties
-  await figma.loadFontAsync(fontName);
-  textNode.fontName = fontName;
-
-  // Set characters
-  textNode.characters = rawText;
-
-  // font size
-  const fs = parsePx(style['font-size']);
-  if (isFiniteNumber(fs) && fs > 0) textNode.fontSize = fs;
-
-  // line height
-  const lh = parsePx(style['line-height']);
-  if (isFiniteNumber(lh) && lh > 0) {
-    textNode.lineHeight = { value: lh, unit: 'PIXELS' };
-  }
-
-  // letter spacing
-  const ls = parsePx(style['letter-spacing']);
-  if (isFiniteNumber(ls)) {
-    textNode.letterSpacing = { value: ls, unit: 'PIXELS' };
-  }
-
-  // align
-  const ta = String(style['text-align'] || '').trim().toLowerCase();
-  if (ta === 'center') textNode.textAlignHorizontal = 'CENTER';
-  else if (ta === 'right' || ta === 'end') textNode.textAlignHorizontal = 'RIGHT';
-  else if (ta === 'justify') textNode.textAlignHorizontal = 'JUSTIFIED';
-  else textNode.textAlignHorizontal = 'LEFT';
-
-  // color
-  const c = parseCSSColor(style['color']);
-  if (c && c.a > 0) {
-    textNode.fills = [{
-      type: 'SOLID',
-      color: { r: c.r, g: c.g, b: c.b },
-      opacity: c.a
-    }];
-  }
-
-  // opacity
-  const op = parseFloatSafe(style['opacity']);
-  if (isFiniteNumber(op)) textNode.opacity = clamp(op, 0, 1);
-
-  textNode.name = 'Text';
-
-  return true;
-}
-
-function firstFontFamily(v) {
-  if (!v) return null;
-  const s = String(v);
-  const parts = s.split(',').map(x => x.trim()).filter(Boolean);
-  if (!parts.length) return null;
-  return parts[0].replace(/^["']|["']$/g, '');
-}
-
-function weightToStyle(weight) {
-  const w = parseIntSafe(weight);
-  if (w >= 700) return 'Bold';
-  if (w >= 600) return 'Semi Bold';
-  if (w >= 500) return 'Medium';
-  return 'Regular';
-}
-
-async function resolveFont(cssFamily, cssWeight) {
-  const style = weightToStyle(cssWeight);
-
-  const candidates = [];
-  if (cssFamily) candidates.push({ family: cssFamily, style });
-  candidates.push({ family: 'Inter', style });
-  candidates.push({ family: 'Inter', style: 'Regular' });
-
-  for (const f of candidates) {
-    try {
-      await figma.loadFontAsync(f);
-      return f;
-    } catch (_) {
-      // try next
-    }
-  }
-
-  // Last resort: try Inter Regular without pre-check
-  return { family: 'Inter', style: 'Regular' };
-}
-
-// ---------------------------
-// Parsing helpers
-// ---------------------------
-function normalizeBounds(b) {
-  if (!b) return null;
-  const x = safeNum(b.x, null);
-  const y = safeNum(b.y, null);
-  const w = safeNum(b.width, null);
-  const h = safeNum(b.height, null);
-  if (![x, y, w, h].every(isFiniteNumber)) return null;
-  if (w <= 0 || h <= 0) return null;
-  return {
-    x: Math.round(x),
-    y: Math.round(y),
-    width: Math.max(1, Math.round(w)),
-    height: Math.max(1, Math.round(h))
-  };
-}
-
-function parsePx(v) {
-  if (v == null) return null;
-  const s = String(v).trim().toLowerCase();
-  if (s === '0') return 0;
-  const m = s.match(/^(-?\d+(\.\d+)?)px$/);
-  if (m) return parseFloat(m[1]);
-  const n = parseFloat(s);
-  return isFiniteNumber(n) ? n : null;
-}
-
-function parseCSSColor(v) {
-  if (!v) return null;
-  let s = String(v).trim().toLowerCase();
-  if (!s) return null;
-  if (s === 'transparent') return { r: 0, g: 0, b: 0, a: 0 };
-
-  // hex
-  const hex = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
-  if (hex) {
-    const h = hex[1];
-    if (h.length === 3) {
-      const r = parseInt(h[0] + h[0], 16);
-      const g = parseInt(h[1] + h[1], 16);
-      const b = parseInt(h[2] + h[2], 16);
-      return { r: r/255, g: g/255, b: b/255, a: 1 };
-    } else {
-      const r = parseInt(h.slice(0,2), 16);
-      const g = parseInt(h.slice(2,4), 16);
-      const b = parseInt(h.slice(4,6), 16);
-      return { r: r/255, g: g/255, b: b/255, a: 1 };
-    }
-  }
-
-  const m = s.match(/^rgba?\((.*)\)$/);
-  if (!m) return null;
-
-  const inner = m[1].replace(/\//g, ' ');
-  const parts = inner.split(/[\s,]+/).map(x => x.trim()).filter(Boolean);
-
-  if (parts.length < 3) return null;
-
-  const r = parseFloat(parts[0]);
-  const g = parseFloat(parts[1]);
-  const b = parseFloat(parts[2]);
-  const a = parts.length >= 4 ? parseFloat(parts[3]) : 1;
-
-  if (![r, g, b, a].every(isFiniteNumber)) return null;
-
-  return {
-    r: clamp(r/255, 0, 1),
-    g: clamp(g/255, 0, 1),
-    b: clamp(b/255, 0, 1),
-    a: clamp(a, 0, 1)
-  };
-}
-
-function parseFirstDropShadow(v) {
-  if (!v) return null;
-  const s = String(v).trim();
-  if (!s || s === 'none') return null;
-
-  // Split multiple shadows by commas not in parens
-  const parts = splitOutsideParens(s);
-  for (const part of parts) {
-    const p = part.trim();
-    if (!p) continue;
-    if (/\binset\b/i.test(p)) continue;
-
-    // Find color token (rgb/rgba/#hex)
-    const colorMatch = p.match(/(rgba?\([^)]+\)|#[0-9a-fA-F]{3,6})/);
-    const color = colorMatch ? parseCSSColor(colorMatch[1]) : { r: 0, g: 0, b: 0, a: 0.25 };
-
-    // Remove color from string
-    const rest = colorMatch ? p.replace(colorMatch[1], ' ') : p;
-    const tokens = rest.split(/\s+/).map(t => t.trim()).filter(Boolean).filter(t => !/^inset$/i.test(t));
-
-    // Expect: offset-x offset-y blur spread?
-    const ox = parsePx(tokens[0]);
-    const oy = parsePx(tokens[1]);
-    const blur = parsePx(tokens[2]) ?? 0;
-    const spread = parsePx(tokens[3]) ?? 0;
-
-    if (![ox, oy].every(isFiniteNumber)) continue;
-
-    return {
-      color: { r: color.r, g: color.g, b: color.b, a: color.a },
-      offsetX: ox,
-      offsetY: oy,
-      blur: Math.max(0, blur),
-      spread: Math.max(0, spread)
-    };
-  }
-
-  return null;
-}
-
-function splitOutsideParens(s) {
-  const out = [];
-  let buf = '';
-  let depth = 0;
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if (ch === '(') depth++;
-    if (ch === ')') depth = Math.max(0, depth - 1);
-
-    if (ch === ',' && depth === 0) {
-      out.push(buf);
-      buf = '';
-    } else {
-      buf += ch;
-    }
-  }
-  if (buf) out.push(buf);
-  return out;
-}
-
-// ---------------------------
-// small utils
-// ---------------------------
-function isFiniteNumber(n) {
-  return typeof n === 'number' && Number.isFinite(n);
-}
-
-function safeNum(v, fallback) {
-  const n = typeof v === 'number' ? v : parseFloat(String(v));
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function parseFloatSafe(v) {
-  const n = parseFloat(String(v));
-  return Number.isFinite(n) ? n : null;
-}
-
-function parseIntSafe(v) {
-  const n = parseInt(String(v), 10);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function clamp(n, a, b) {
-  return Math.max(a, Math.min(b, n));
-}
-
-5. インストール手順（Figmaにローカルプラグインとして入れる）
-
-figcap-figma-plugin/ を作成し、manifest.json / code.js / ui.html を配置
-
-Figmaデスクトップアプリで
-Menu → Plugins → Development → Import plugin from manifest…
-
-manifest.json を選択
-
-Menu → Plugins → Development → FigCap C (JSON -> Figma) を実行
-
-UIが開くので、JSONをファイル選択 or 貼り付けして Import
-
-6. 既知の制約（受け入れる）
-
-画像（IMAGE）は最小実装ではRect扱い or 無視（この指示書はRect/Text優先）
-
-background-image（グラデやURL背景）は無視
-
-transform（回転/拡縮）の反映は無し
-
-フォントは環境依存：
-指定フォントがロードできない場合、Inter にフォールバックする（必須）
-
-7. テスト計画（合格条件）
-ケース
-
-拡張Bで適当なWebページを Scan → Capture してJSONを保存
-
-Figmaで空ファイルを開いてプラグインCを実行
-
-JSONファイルをImport
-
-期待
-
-Import後、コンテナFrameが生成されて選択状態になり、画面がそこへズームする
-
-selections の数だけ子Frameが作られる
-
-BOXがRectとして生成される
-
-TEXTがTextとして生成される（フォントが無い場合はInterで出る）
-
-UIログに OK: frames=..., rects=..., texts=... が出る
-
-拡張B → JSON → FigmaプラグインC（E2E一気通貫フロー）
-定義（やりたいこと）
-
-Chrome拡張Bで「いま見えてるページ状態」をJSON化
-
-FigmaプラグインCでそのJSONを読み込み、FigmaにFrame/Rect/Textを生成
-
-手順（最短）
-
-Chrome拡張Bをローカルで読み込む
-
-chrome://extensions → Developer mode ON → Load unpacked → figcap-extension/
-
-任意ページを開く（DevToolsモバイル表示でもOK）
-
-拡張Bサイドパネルで
-
-Scan → 候補にチェック → Capture → JSONダウンロード
-
-Figmaでファイルを開く（空でOK）
-
-FigmaプラグインCをDevelopmentから起動
-
-JSONファイルを Import File（Preserve/Stackを適宜選ぶ）
-
-Figma上に生成されたFrame群を確認
-
-運用のコツ
-
-長いページで header と footer を同時に選ぶと、Preserveだと縦に遠く離れがち
-→ そういうときはプラグインCの PreserveをOFF（Stack） にして詰める
-
-具体例（最小JSONでの動作確認）
-
-sample.json
-
+```
+
+---
+
+## 2. UI (ui.html)
+- JSONファイル選択 or テキストペースト
+- Import File / Import Text / Clear / Close
+- オプション: `preservePosition`（デフォルトtrue）, `autoTextWidth`（デフォルトON）
+- 結果・エラーをlogに表示  
+通信: `parent.postMessage({ pluginMessage: { type: "IMPORT_JSON", jsonText, options } }, "*");`
+
+---
+
+## 3. メインロジック (code.js)
+### フロー
+1. `validateFigcapJson` (version=1, selections[], rootRect, layers必須)
+2. `importFigcapToFigma`  
+   - preservePosition=true: selectionsのrootRectでBBoxを作り、その位置関係で配置  
+   - false: 縦積み（gap=80）
+3. selectionごとにFrameを生成し、layersを処理
+4. セマンティックタグ（header/nav/main/section/article/aside/footer）はFrame化
+5. Wrapper圧縮：装飾なし＆子1つ、サイズほぼ同じBOXを潰す
+6. レイヤー生成: TEXT/IMAGE/BOX
+7. Flex row/columnかつ安全な場合のみAuto Layout適用
+
+### レイヤー生成
+- TEXT: フォント解決→load→textAutoResize(オプションでWIDTH_AND_HEIGHT)→サイズ調整
+- IMAGE/BOX: Rectangleで生成、ImageはdataUrl→createImage、失敗時はプレースホルダー
+- 命名:  
+  - Text: `Text: <サマリ24文字>`  
+  - Image: `Image: <alt or filename>`  
+  - Box/Frame: `Tag#id` or `Tag.class`（ユーティリティ除外）
+
+### スタイル適用
+- opacity, fills(bg-color), strokes(border), corner radius, drop shadow, effects
+- TEXT: color, font-size, weight→style, line-height, letter-spacing, textAlignHorizontal/Vertical(TOP)
+
+### Auto Layout（安全枠のみ）
+- 対象: display:flex/inline-flex かつ flex-direction=row/column, wrapなし
+- 幾何チェック: 主軸方向に単調増加、重なり大でない
+- 設定: layoutMode(HORIZONTAL/VERTICAL), itemSpacing(gap), padding*, primaryAxisAlignItems(justify), counterAxisAlignItems(align-items), stretch→子layoutAlign=STRETCH
+- wrap/gridは未対応（将来拡張）
+
+### 画像
+- dataUrl→figma.base64Decode→createImage、例外は握り潰し継続
+- IMAGE typeでdataUrlなし→プレースホルダー（灰背景+枠+テキスト）
+
+### Wrapper圧縮
+- 非セマンティックBOXで装飾なし、子1つ、サイズほぼ同じ→親付け替えで潰す（最大5パス）
+
+---
+
+## 4. 想定JSONフォーマット（拡張B v1）
+```json
 {
   "version": 1,
-  "capturedAt": "2026-01-17T12:34:56.000Z",
-  "page": {
-    "url": "https://example.com",
-    "title": "Example",
-    "viewport": { "innerWidth": 390, "innerHeight": 844, "devicePixelRatio": 3 },
-    "scroll": { "x": 0, "y": 0 }
-  },
+  "capturedAt": "...",
+  "page": { "url": "...", "title": "...", "viewport": {...}, "scroll": {...} },
   "selections": [
     {
-      "id": "sel-1",
-      "rootRect": { "x": 0, "y": 0, "width": 390, "height": 200 },
+      "id": "...",
+      "rootNodeIndex": 123,
+      "rootRect": { "x":0,"y":0,"width":..., "height":... },
       "layers": [
         {
-          "type": "BOX",
-          "tag": "div",
-          "bounds": { "x": 0, "y": 0, "width": 390, "height": 64 },
-          "style": { "background-color": "rgb(255, 255, 255)" },
-          "paintOrder": 0
-        },
-        {
-          "type": "TEXT",
-          "tag": "#text",
-          "bounds": { "x": 16, "y": 20, "width": 200, "height": 24 },
-          "text": "Hello",
-          "style": {
-            "font-family": "Inter",
-            "font-size": "16px",
-            "font-weight": "700",
-            "line-height": "24px",
-            "letter-spacing": "0px",
-            "text-align": "left",
-            "color": "rgb(0, 0, 0)"
-          },
-          "paintOrder": 1
+          "nodeIndex": 10,
+          "parentNodeIndex": 5,
+          "tag": "header",
+          "type": "BOX" | "TEXT" | "IMAGE",
+          "bounds": { "x":..., "y":..., "width":..., "height":... }, // rootRect相対
+          "text": "...",
+          "style": { /* computed styles: display/bg/border/shadow/font/textAlign/padding/flex/gap... */ },
+          "image": { "src": "...", "dataUrl": "...", "alt": "..." },
+          "isSemantic": true/false,
+          "elemId": "...",
+          "elemClass": "...",
+          "paintOrder": n
         }
-      ]
+      ],
+      "truncated": false
     }
   ]
 }
+```
 
+---
 
-これをプラグインCでImportできれば、まず“配線”は勝ち。
+## 5. 既知の制約 / 注意
+- Figma sandboxは一部モダン構文不可：spread/nullish不可。回避済み（Object.assign, apply等）
+- createImageはPNG/JPEG/GIFのみ、4096px制限あり
+- Auto Layoutは安全枠のみ適用、wrap/gridは非対応
+- HUG/FILLは最小限（親はFIXED、stretchは子layoutAlignで対応）
+- 外部URL直接fetchはせず、拡張でdataUrl化して渡す前提
+
+---
+
+## 6. テスト観点
+1) 正常系：拡張Bの最新JSONをImport → Frame/Text/Imageが生成される  
+2) 画像: dataUrl有りで表示、無しでプレースホルダー表示  
+3) テキスト: Auto Text Width ON、色/サイズ/weight/line-height/letter-spacing/align が反映  
+4) セマンティック階層: header/nav/main/section… がFrame化  
+5) Wrapper圧縮: 意味ないラッパーが潰れて階層が浅くなっている  
+6) Auto Layout: flex row/col のみ適用、崩れがないか確認  
+7) preservePosition ON/OFF で配置が切り替わる  
+
+---
+
+## 7. 今後の拡張アイデア
+- wrap対応（layoutWrap + counterAxisSpacing）
+- grid対応
+- Auto Layout推定のため inferredAutoLayout の活用
+- テキストHUG/固定幅判定の精度向上
+- 背景fill化や余計なレイヤー削減による軽量化
+
+---
+
+## 8. 引き継ぎメモ
+- Chrome拡張Bの出力（v1 JSON）に依存。schemaが変わる場合は validate と import を更新すること。
+- 画像は拡張側でdataURL化済みなので、Figma側は createImage に集中すればOK。
+- Auto Layoutはあくまで「安全に当たる場合のみ」。壊れやすいケースは layoutMode NONE のまま。
+
+以上でプラグイン側ドキュメントを最新化。拡張Bドキュメント（Doc/ChromeExtention.md）とあわせて参照すれば開発を再開できる状態。***
