@@ -426,7 +426,11 @@ async function captureViaCDP(tabId, selectedIds, pageMeta) {
       "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
       "border-top-color", "border-right-color", "border-bottom-color", "border-left-color",
       "box-shadow",
-      "color", "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "text-align"
+      "color", "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "text-align",
+      // for Auto Layout inference
+      "padding-top", "padding-right", "padding-bottom", "padding-left",
+      "flex-direction", "flex-wrap", "justify-content", "align-items", "align-content",
+      "gap", "row-gap", "column-gap"
     ];
 
     const snap = await chrome.debugger.sendCommand(

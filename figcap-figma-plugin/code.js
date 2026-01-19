@@ -169,6 +169,7 @@ async function importSelection(parentFrame, sel, pos, options) {
   // Build hierarchy: create Frames for semantic containers
   const nodeToFigmaFrame = new Map(); // nodeIndex -> Figma Frame
   const nodeToLayer = new Map(); // nodeIndex -> layer data
+  const nodeToFigmaNode = new Map(); // nodeIndex -> created Figma node (frame/rect/text)
   
   // First pass: index all layers by nodeIndex
   for (const layer of layers) {
@@ -218,6 +219,7 @@ async function importSelection(parentFrame, sel, pos, options) {
     frame.resize(Math.max(1, b.width), Math.max(1, b.height));
 
     nodeToFigmaFrame.set(layer.nodeIndex, frame);
+    nodeToFigmaNode.set(layer.nodeIndex, frame);
     frames++;
   }
 
@@ -253,15 +255,206 @@ async function importSelection(parentFrame, sel, pos, options) {
     }
 
     if (type === 'TEXT') {
-      const ok = await createTextFromLayer(targetParent, adjustedLayer, options);
-      if (ok) texts++;
+      const node = await createTextFromLayer(targetParent, adjustedLayer, options);
+      if (node) {
+        texts++;
+        if (layer.nodeIndex != null) nodeToFigmaNode.set(layer.nodeIndex, node);
+      }
     } else if (type === 'BOX' || type === 'IMAGE') {
-      const ok = await createRectFromLayer(targetParent, adjustedLayer);
-      if (ok) rects++;
+      const node = await createRectFromLayer(targetParent, adjustedLayer);
+      if (node) {
+        rects++;
+        if (layer.nodeIndex != null) nodeToFigmaNode.set(layer.nodeIndex, node);
+      }
     }
   }
 
+  // Fourth pass: apply Auto Layout to flex-like containers (only safe cases)
+  try {
+    const childrenMap = buildChildrenMap(layers);
+    for (const entry of nodeToFigmaFrame.entries()) {
+      const nodeIndex = entry[0];
+      const figmaFrame = entry[1];
+      const layer = nodeToLayer.get(nodeIndex);
+      if (!layer) continue;
+      const childLayers = childrenMap.get(nodeIndex) || [];
+      const childNodes = figmaFrame.children.slice();
+      applyAutoLayoutIfSafe(figmaFrame, layer, childLayers, childNodes);
+    }
+  } catch (_) {
+    // fail silently to avoid breaking import
+  }
+
   return { frames, rects, texts };
+}
+
+// Build parent -> children mapping
+function buildChildrenMap(layers) {
+  const map = new Map();
+  for (const l of layers) {
+    if (!l) continue;
+    map.set(l.nodeIndex, []);
+  }
+  for (const l of layers) {
+    if (!l) continue;
+    if (l.parentNodeIndex != null && map.has(l.parentNodeIndex)) {
+      map.get(l.parentNodeIndex).push(l);
+    }
+  }
+  return map;
+}
+
+// Apply Auto Layout when safe (flex row/col, no heavy overlaps)
+function applyAutoLayoutIfSafe(frame, layer, childLayers, childNodes) {
+  if (!frame || !layer || !layer.style) return;
+  if (!childLayers || childLayers.length < 2) return;
+
+  const style = layer.style || {};
+  const display = String(style['display'] || '').toLowerCase();
+  if (display !== 'flex' && display !== 'inline-flex') return;
+
+  const dirRaw = String(style['flex-direction'] || '').toLowerCase();
+  let mode = null;
+  if (dirRaw.indexOf('row') >= 0) mode = 'HORIZONTAL';
+  else if (dirRaw.indexOf('column') >= 0) mode = 'VERTICAL';
+  else return;
+
+  // wrap は後回し
+  const wrap = String(style['flex-wrap'] || '').toLowerCase();
+  if (wrap && wrap !== 'nowrap') return;
+
+  // Geometry safety check
+  if (!isMonotonic(childLayers, mode)) return;
+  if (hasHeavyOverlap(childLayers)) return;
+
+  // itemSpacing from gap
+  const gapVal = parseGap(style, mode);
+
+  // padding
+  const padding = {
+    top: safePx(style['padding-top']),
+    right: safePx(style['padding-right']),
+    bottom: safePx(style['padding-bottom']),
+    left: safePx(style['padding-left'])
+  };
+
+  // alignments
+  const jc = String(style['justify-content'] || '').toLowerCase();
+  const ai = String(style['align-items'] || '').toLowerCase();
+
+  const primary = mapJustify(jc);
+  const counter = mapAlignItems(ai);
+
+  // Apply
+  frame.layoutMode = mode;
+  frame.itemSpacing = isFiniteNumber(gapVal) ? gapVal : 0;
+  frame.paddingTop = isFiniteNumber(padding.top) ? padding.top : 0;
+  frame.paddingRight = isFiniteNumber(padding.right) ? padding.right : 0;
+  frame.paddingBottom = isFiniteNumber(padding.bottom) ? padding.bottom : 0;
+  frame.paddingLeft = isFiniteNumber(padding.left) ? padding.left : 0;
+  frame.primaryAxisAlignItems = primary || 'MIN';
+  frame.counterAxisAlignItems = counter || 'MIN';
+
+  // Stretch handling for align-items: stretch
+  if (ai === 'stretch') {
+    for (let i = 0; i < childNodes.length; i++) {
+      const n = childNodes[i];
+      try { n.layoutAlign = 'STRETCH'; } catch (_) {}
+    }
+  }
+}
+
+function isMonotonic(childLayers, mode) {
+  if (!childLayers || childLayers.length < 2) return false;
+  const tol = 2;
+  if (mode === 'HORIZONTAL') {
+    let prev = null;
+    for (let i = 0; i < childLayers.length; i++) {
+      const b = childLayers[i].bounds;
+      if (!b) return false;
+      const cx = safeNum(b.x, 0) + safeNum(b.width, 0) / 2;
+      if (prev != null && cx + tol < prev) return false;
+      prev = cx;
+    }
+    return true;
+  } else if (mode === 'VERTICAL') {
+    let prev = null;
+    for (let i = 0; i < childLayers.length; i++) {
+      const b = childLayers[i].bounds;
+      if (!b) return false;
+      const cy = safeNum(b.y, 0) + safeNum(b.height, 0) / 2;
+      if (prev != null && cy + tol < prev) return false;
+      prev = cy;
+    }
+    return true;
+  }
+  return false;
+}
+
+function hasHeavyOverlap(childLayers) {
+  // 2つずつ重なり率が大きいなら避ける
+  const maxRatio = 0.3;
+  for (let i = 0; i < childLayers.length; i++) {
+    const a = childLayers[i];
+    if (!a || !a.bounds) continue;
+    const ar = a.bounds;
+    for (let j = i + 1; j < childLayers.length; j++) {
+      const b = childLayers[j];
+      if (!b || !b.bounds) continue;
+      const br = b.bounds;
+      const inter = intersectionArea(ar, br);
+      if (inter <= 0) continue;
+      const areaA = Math.max(1, ar.width * ar.height);
+      const areaB = Math.max(1, br.width * br.height);
+      const ratio = inter / Math.min(areaA, areaB);
+      if (ratio > maxRatio) return true;
+    }
+  }
+  return false;
+}
+
+function intersectionArea(a, b) {
+  const x1 = Math.max(safeNum(a.x, 0), safeNum(b.x, 0));
+  const y1 = Math.max(safeNum(a.y, 0), safeNum(b.y, 0));
+  const x2 = Math.min(safeNum(a.x, 0) + safeNum(a.width, 0), safeNum(b.x, 0) + safeNum(b.width, 0));
+  const y2 = Math.min(safeNum(a.y, 0) + safeNum(a.height, 0), safeNum(b.y, 0) + safeNum(b.height, 0));
+  if (x2 <= x1 || y2 <= y1) return 0;
+  return (x2 - x1) * (y2 - y1);
+}
+
+function parseGap(style, mode) {
+  if (!style) return 0;
+  const gapAll = safePx(style['gap']);
+  const rowGap = safePx(style['row-gap']);
+  const colGap = safePx(style['column-gap']);
+  if (isFiniteNumber(gapAll)) return gapAll;
+  if (mode === 'HORIZONTAL' && isFiniteNumber(colGap)) return colGap;
+  if (mode === 'VERTICAL' && isFiniteNumber(rowGap)) return rowGap;
+  return 0;
+}
+
+function mapJustify(v) {
+  if (!v) return null;
+  if (v === 'flex-start' || v === 'start' || v === 'left') return 'MIN';
+  if (v === 'flex-end' || v === 'end' || v === 'right') return 'MAX';
+  if (v === 'center') return 'CENTER';
+  if (v === 'space-between') return 'SPACE_BETWEEN';
+  return null; // space-around/evenly は未対応
+}
+
+function mapAlignItems(v) {
+  if (!v) return null;
+  if (v === 'flex-start' || v === 'start' || v === 'top') return 'MIN';
+  if (v === 'flex-end' || v === 'end' || v === 'bottom') return 'MAX';
+  if (v === 'center') return 'CENTER';
+  if (v === 'baseline') return 'BASELINE';
+  // stretch は子で対応
+  return null;
+}
+
+function safePx(val) {
+  const n = parsePx(val);
+  return isFiniteNumber(n) ? n : null;
 }
 
 // ----------------------------------------
@@ -549,7 +742,7 @@ async function createRectFromLayer(parent, layer) {
   // name
   rect.name = buildLayerName(layer);
 
-  return true;
+  return rect;
 }
 
 let placeholderFontPromise = null;
@@ -808,7 +1001,7 @@ async function createTextFromLayer(parent, layer, options) {
 
   textNode.name = buildLayerName(layer);
 
-  return true;
+  return textNode;
 }
 
 function firstFontFamily(v) {
