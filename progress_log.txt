@@ -1,11 +1,4 @@
 2026-01-17
 - Implemented Chrome extension B (figcap-extension): manifest, service worker, sidepanel UI/logic, content script, overlay CSS, and icons.
 - Implemented Figma plugin C (figcap-figma-plugin): manifest, UI, and JSON import logic.
-- Normalized captured text whitespace in extension to avoid phantom spacing.
-- Added ALL selection in extension candidates list.
-- Added data URL embedding for images (extension) and image fills in Figma plugin.
-- Made image decode failures non-fatal and added non-base64 data URL support.
-- Resolved relative image URLs and srcset during capture to improve image embedding.
-- Added CDP clip screenshot fallback to embed images when URL fetch fails.
-- Added image placeholders with filename labels when images are missing.
-- Improved image capture: added Canvas-based fallback, CDP attr extraction, and visible placeholder with gray background.
+- Added option to auto-size text width and align top to reduce text drift in Figma import.
