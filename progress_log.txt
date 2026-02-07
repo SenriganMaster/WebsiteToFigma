@@ -2,3 +2,6 @@
 - Implemented Chrome extension B (figcap-extension): manifest, service worker, sidepanel UI/logic, content script, overlay CSS, and icons.
 - Implemented Figma plugin C (figcap-figma-plugin): manifest, UI, and JSON import logic.
 - Added option to auto-size text width and align top to reduce text drift in Figma import.
+
+2026-02-07
+- Fixed BF-1: Overlay highlights (purple/pink borders) were being captured in screenshots during image clip capture via CDP Page.captureScreenshot. Added FIGCAP_CLEAR_OVERLAY before capture and updateHighlight() after capture to restore highlights.
