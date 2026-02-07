@@ -370,6 +370,9 @@ btnCapture.addEventListener("click", async () => {
     lastScanMeta = meta;
   }
 
+  // Hide overlay before capture so highlights don't appear in screenshots
+  await chrome.tabs.sendMessage(currentTabId, { type: "FIGCAP_CLEAR_OVERLAY" });
+
   // Mark selected elements so CDP snapshot can locate them
   await chrome.tabs.sendMessage(currentTabId, { type: "FIGCAP_MARK", ids });
 
@@ -411,6 +414,9 @@ btnCapture.addEventListener("click", async () => {
   } catch (e) {
     log("Canvas capture failed:", String(e));
   }
+
+  // Restore overlay highlights after capture is complete
+  await updateHighlight();
 
   await downloadJSON(result);
   log("Downloaded JSON.");
