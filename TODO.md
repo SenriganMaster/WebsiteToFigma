@@ -214,7 +214,7 @@
 - [x] 原因調査 (2026-02-07 完了)
   - captureImageClipsViaCDP() の Page.captureScreenshot 時にオーバーレイが表示されたまま
   - 紫/ピンクのハイライト枠がスクリーンショットに焼き込まれる
-- [ ] 修正: キャプチャ前に FIGCAP_CLEAR_OVERLAY でオーバーレイ消去、完了後に再描画 (作業中)
+- [x] 修正: キャプチャ前に FIGCAP_CLEAR_OVERLAY でオーバーレイ消去、完了後に再描画 (2026-02-07 完了)
 
 ---
 
