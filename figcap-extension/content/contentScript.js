@@ -43,13 +43,188 @@
         innerHeight: window.innerHeight,
         devicePixelRatio: window.devicePixelRatio
       },
-      scroll: { x: window.scrollX, y: window.scrollY }
+      scroll: { x: window.scrollX, y: window.scrollY },
+      backgroundColor: getPageBackgroundColor()
     };
   }
 
   function normalizeText(raw) {
     if (!raw) return "";
     return String(raw).replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  function isTransparentColor(value) {
+    const s = String(value || "").trim().toLowerCase();
+    return !s || s === "transparent" || s === "rgba(0, 0, 0, 0)" || s === "rgb(0 0 0 / 0)";
+  }
+
+  function getPageBackgroundColor() {
+    const candidates = [
+      document.body,
+      document.documentElement
+    ];
+
+    for (const el of candidates) {
+      if (!el) continue;
+      const color = window.getComputedStyle(el).backgroundColor || "";
+      if (!isTransparentColor(color)) return color;
+    }
+
+    return "";
+  }
+
+  function isNativeFormControlTag(tag) {
+    return tag === "input" || tag === "textarea" || tag === "select" || tag === "button";
+  }
+
+  function getElementSiblingIndex(el) {
+    if (!el || !el.parentElement) return 0;
+    let idx = 0;
+    for (const child of el.parentElement.children) {
+      if (child === el) return idx;
+      idx++;
+    }
+    return 0;
+  }
+
+  function buildElementDomPath(el, rootEl) {
+    if (!el || el === rootEl) return "";
+    const parts = [];
+    let cur = el;
+    while (cur && cur.nodeType === Node.ELEMENT_NODE && cur !== rootEl) {
+      parts.unshift(`${cur.tagName.toLowerCase()}:${getElementSiblingIndex(cur)}`);
+      cur = cur.parentElement;
+    }
+    return parts.join("/");
+  }
+
+  function getSelectDisplayText(el) {
+    const selected = Array.from(el.selectedOptions || []);
+    if (selected.length) {
+      return normalizeText(selected.map(opt => opt.label || opt.textContent || opt.value || "").join(", "));
+    }
+    return normalizeText(el.value || "");
+  }
+
+  function getButtonDisplayText(el) {
+    return normalizeText(el.innerText || el.textContent || el.value || "");
+  }
+
+  function getFormControlMeta(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return null;
+    const tag = el.tagName.toLowerCase();
+
+    if (tag === "select") {
+      return {
+        kind: "select",
+        value: String(el.value || ""),
+        displayText: getSelectDisplayText(el),
+        disabled: !!el.disabled,
+        multiple: !!el.multiple
+      };
+    }
+
+    if (tag === "textarea") {
+      return {
+        kind: "textarea",
+        value: String(el.value || ""),
+        displayText: String(el.value || ""),
+        placeholder: String(el.placeholder || ""),
+        disabled: !!el.disabled,
+        readOnly: !!el.readOnly
+      };
+    }
+
+    if (tag === "button") {
+      return {
+        kind: "button",
+        value: String(el.value || ""),
+        displayText: getButtonDisplayText(el),
+        disabled: !!el.disabled
+      };
+    }
+
+    if (tag === "input") {
+      const inputType = String(el.type || "text").toLowerCase();
+      const isBoolean = inputType === "checkbox" || inputType === "radio";
+      return {
+        kind: "input",
+        inputType,
+        value: String(el.value || ""),
+        displayText: isBoolean ? "" : String(el.value || ""),
+        placeholder: String(el.placeholder || ""),
+        checked: !!el.checked,
+        disabled: !!el.disabled,
+        readOnly: !!el.readOnly
+      };
+    }
+
+    return null;
+  }
+
+  function filterRedundantSelectionIds(ids) {
+    const entries = [];
+    const seenElements = new Set();
+
+    for (const id of ids) {
+      const el = state.candidates.get(id);
+      if (!el || el.nodeType !== Node.ELEMENT_NODE) continue;
+      if (seenElements.has(el)) continue;
+      seenElements.add(el);
+      entries.push({ id, el });
+    }
+
+    return entries
+      .filter(entry => !entries.some(other => other !== entry && other.el.contains(entry.el)))
+      .map(entry => entry.id);
+  }
+
+  function captureFormControls(ids) {
+    const selections = [];
+
+    for (const id of ids) {
+      const rootEl =
+        state.candidates.get(id) ||
+        document.querySelector(`[data-figcap-id="${CSS.escape(id)}"]`);
+
+      if (!rootEl || rootEl.nodeType !== Node.ELEMENT_NODE) continue;
+      if (shouldSkipElementForCapture(rootEl)) continue;
+
+      const rootFixedLike = hasFixedAncestor(rootEl, null);
+      const rootRect = rectFromClientRect(rootEl.getBoundingClientRect(), rootFixedLike);
+      const controls = [];
+      const elements = [rootEl, ...rootEl.querySelectorAll("input, textarea, select, button")];
+
+      for (const el of elements) {
+        if (!el || el.nodeType !== Node.ELEMENT_NODE) continue;
+        const tag = el.tagName.toLowerCase();
+        if (!isNativeFormControlTag(tag)) continue;
+
+        const formControl = getFormControlMeta(el);
+        if (!formControl) continue;
+
+        const fixedLike = hasFixedAncestor(el, null);
+        const absRect = rectFromClientRect(el.getBoundingClientRect(), fixedLike);
+        const rel = {
+          x: absRect.x - rootRect.x,
+          y: absRect.y - rootRect.y,
+          width: absRect.width,
+          height: absRect.height
+        };
+        if (rel.width <= 0 || rel.height <= 0) continue;
+
+        controls.push({
+          tag,
+          domPath: buildElementDomPath(el, rootEl),
+          bounds: rel,
+          formControl
+        });
+      }
+
+      selections.push({ id, controls });
+    }
+
+    return { ok: true, selections };
   }
 
   // ---------------------------
@@ -222,7 +397,9 @@
     "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
     "border-top-color", "border-right-color", "border-bottom-color", "border-left-color",
     "box-shadow",
-    "color", "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "text-align"
+    "color", "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "text-align",
+    "padding-top", "padding-right", "padding-bottom", "padding-left",
+    "overflow-x", "overflow-y", "position"
   ];
   const FIGCAP_DEFAULT_MAX_NODES = 3000;
 
@@ -285,6 +462,51 @@
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
   }
 
+  function isOverflowClippingValue(value) {
+    const s = String(value || "").trim().toLowerCase();
+    return s === "hidden" || s === "clip" || s === "scroll" || s === "auto";
+  }
+
+  function rectExtendsOutside(inner, outer, tolerance = 1) {
+    if (!inner || !outer) return false;
+    return inner.x < outer.x - tolerance ||
+      inner.y < outer.y - tolerance ||
+      inner.x + inner.width > outer.x + outer.width + tolerance ||
+      inner.y + inner.height > outer.y + outer.height + tolerance;
+  }
+
+  function canOverflowEscape(el, rootEl) {
+    let cur = el;
+    while (cur && cur.nodeType === Node.ELEMENT_NODE) {
+      const style = window.getComputedStyle(cur);
+      if (isOverflowClippingValue(style.overflowX) || isOverflowClippingValue(style.overflowY)) {
+        return false;
+      }
+      if (cur === rootEl) break;
+      cur = cur.parentElement;
+    }
+    return true;
+  }
+
+  function expandRootRectForVisibleOverflow(rootEl, rootRect) {
+    if (!rootEl || !rootRect) return rootRect;
+    const rects = [rootRect];
+    const elements = rootEl.querySelectorAll("*");
+
+    for (let i = 0; i < elements.length; i++) {
+      const el = elements[i];
+      if (shouldSkipElementForCapture(el)) continue;
+      const fixedLike = hasFixedAncestor(el, null);
+      const r = rectFromClientRect(el.getBoundingClientRect(), fixedLike);
+      if (r.width < 1 || r.height < 1) continue;
+      if (!rectExtendsOutside(r, rootRect)) continue;
+      if (!canOverflowEscape(el, rootEl)) continue;
+      rects.push(r);
+    }
+
+    return unionRects(rects) || rootRect;
+  }
+
   function getTextNodeAbsRect(textNode, fixedLike) {
     try {
       const range = document.createRange();
@@ -339,6 +561,8 @@
         if (u) rootRect = u;
       }
 
+      rootRect = expandRootRectForVisibleOverflow(rootEl, rootRect);
+
       const layers = [];
       let paintOrder = 0;
 
@@ -389,9 +613,11 @@
                 bounds: rel,
                 text: "",
                 style,
-                paintOrder: paintOrder++
+                paintOrder: paintOrder++,
+                domPath: buildElementDomPath(el, rootEl)
               };
               if (tag === "img") layer.image = { src: el.currentSrc || el.src || "" };
+              if (isNativeFormControlTag(tag)) layer.formControl = getFormControlMeta(el);
               layers.push(layer);
             }
           }
@@ -489,6 +715,15 @@
         markSelected(msg.ids || []);
         sendResponse({ ok: true });
 
+      } else if (msg?.type === "FIGCAP_FILTER_SELECTIONS") {
+        const ids = Array.isArray(msg.ids) ? msg.ids : [];
+        const filteredIds = filterRedundantSelectionIds(ids);
+        sendResponse({
+          ok: true,
+          ids: filteredIds,
+          removed: Math.max(0, ids.length - filteredIds.length)
+        });
+
       } else if (msg?.type === "FIGCAP_UNMARK") {
         unmarkAll();
         sendResponse({ ok: true });
@@ -501,6 +736,10 @@
         const ids = Array.isArray(msg.ids) ? msg.ids : [];
         const maxNodes = Number.isFinite(msg.maxNodesPerSelection) ? msg.maxNodesPerSelection : FIGCAP_DEFAULT_MAX_NODES;
         sendResponse(captureDomSelections(ids, maxNodes));
+
+      } else if (msg?.type === "FIGCAP_CAPTURE_FORM_CONTROLS") {
+        const ids = Array.isArray(msg.ids) ? msg.ids : [];
+        sendResponse(captureFormControls(ids));
 
       } else if (msg?.type === "FIGCAP_CAPTURE_IMAGE") {
         const selector = msg.selector || "";

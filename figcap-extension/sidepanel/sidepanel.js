@@ -303,6 +303,54 @@ async function enrichImageLayersViaCanvas(tabId, result) {
   }
 }
 
+function isApproxSameBounds(a, b, tolerance = 2) {
+  if (!a || !b) return false;
+  return Math.abs((a.x || 0) - (b.x || 0)) <= tolerance &&
+    Math.abs((a.y || 0) - (b.y || 0)) <= tolerance &&
+    Math.abs((a.width || 0) - (b.width || 0)) <= tolerance &&
+    Math.abs((a.height || 0) - (b.height || 0)) <= tolerance;
+}
+
+function mergeFormControlMetadata(result, payload) {
+  const selections = result && Array.isArray(result.selections) ? result.selections : [];
+  const metaSelections = payload && Array.isArray(payload.selections) ? payload.selections : [];
+  const controlsBySelection = new Map(metaSelections.map(sel => [sel.id, Array.isArray(sel.controls) ? sel.controls : []]));
+
+  for (const sel of selections) {
+    const controls = controlsBySelection.get(sel.id) || [];
+    const controlsByPath = new Map();
+    for (const control of controls) {
+      if (!control || !control.formControl) continue;
+      const key = `${String(control.tag || "").toLowerCase()}|${String(control.domPath || "")}`;
+      controlsByPath.set(key, control);
+    }
+
+    const layers = Array.isArray(sel.layers) ? sel.layers : [];
+    for (const layer of layers) {
+      if (!layer || !layer.bounds) continue;
+      const key = `${String(layer.tag || "").toLowerCase()}|${String(layer.domPath || "")}`;
+      let match = controlsByPath.get(key);
+      if (!match) {
+        match = controls.find(control =>
+          String(control.tag || "").toLowerCase() === String(layer.tag || "").toLowerCase() &&
+          isApproxSameBounds(control.bounds, layer.bounds)
+        );
+      }
+      if (match && match.formControl) {
+        layer.formControl = match.formControl;
+      }
+    }
+  }
+}
+
+async function enrichFormControlLayers(tabId, selectedIds, result) {
+  const payload = await chrome.tabs.sendMessage(tabId, {
+    type: "FIGCAP_CAPTURE_FORM_CONTROLS",
+    ids: selectedIds
+  });
+  mergeFormControlMetadata(result, payload);
+}
+
 btnScan.addEventListener("click", async () => {
   elLog.textContent = "";
   currentTabId = await getActiveTabId();
@@ -362,6 +410,19 @@ btnCapture.addEventListener("click", async () => {
   const ids = [...selected];
   if (!ids.length) return log("Select at least one element.");
 
+  let captureIds = ids;
+  try {
+    const filterRes = await chrome.tabs.sendMessage(currentTabId, { type: "FIGCAP_FILTER_SELECTIONS", ids });
+    if (filterRes && Array.isArray(filterRes.ids) && filterRes.ids.length) {
+      captureIds = filterRes.ids;
+      if (captureIds.length !== ids.length) {
+        log(`Deduped selections: ${ids.length} -> ${captureIds.length}`);
+      }
+    }
+  } catch (e) {
+    log("Selection dedupe skipped:", String(e));
+  }
+
   // Ensure we have meta (if user skipped Scan)
   let meta = lastScanMeta;
   if (!meta) {
@@ -374,15 +435,15 @@ btnCapture.addEventListener("click", async () => {
   await chrome.tabs.sendMessage(currentTabId, { type: "FIGCAP_CLEAR_OVERLAY" });
 
   // Mark selected elements so CDP snapshot can locate them
-  await chrome.tabs.sendMessage(currentTabId, { type: "FIGCAP_MARK", ids });
+  await chrome.tabs.sendMessage(currentTabId, { type: "FIGCAP_MARK", ids: captureIds });
 
   let result = null;
   try {
-    result = await captureViaCDP(currentTabId, ids, meta);
+    result = await captureViaCDP(currentTabId, captureIds, meta);
     log("CDP capture OK.");
   } catch (e) {
     log("CDP capture failed -> fallback:", String(e));
-    result = await captureViaDOMFallback(currentTabId, ids, meta);
+    result = await captureViaDOMFallback(currentTabId, captureIds, meta);
     log("DOM fallback capture OK.");
   } finally {
     await chrome.tabs.sendMessage(currentTabId, { type: "FIGCAP_UNMARK" });
@@ -390,6 +451,13 @@ btnCapture.addEventListener("click", async () => {
 
   // Ensure page meta is always the scan meta
   if (meta) result.page = meta;
+
+  try {
+    await enrichFormControlLayers(currentTabId, captureIds, result);
+    log("Form control enrich done.");
+  } catch (e) {
+    log("Form control enrich failed:", String(e));
+  }
 
   // Enrich images via fetch
   try {
@@ -436,7 +504,8 @@ async function captureViaCDP(tabId, selectedIds, pageMeta) {
       // for Auto Layout inference
       "padding-top", "padding-right", "padding-bottom", "padding-left",
       "flex-direction", "flex-wrap", "justify-content", "align-items", "align-content",
-      "gap", "row-gap", "column-gap"
+      "gap", "row-gap", "column-gap",
+      "overflow-x", "overflow-y", "position"
     ];
 
     const snap = await chrome.debugger.sendCommand(
@@ -460,6 +529,7 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
   const layout = doc.layout;
 
   const parentIndex = nodes.parentIndex || [];
+  const nodeType = nodes.nodeType || [];
   const nodeName = nodes.nodeName || [];
   const attrs = nodes.attributes || [];
 
@@ -502,6 +572,38 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
     return set;
   }
 
+  function getElementSiblingIndex(nodeIdx) {
+    const p = parentIndex[nodeIdx];
+    if (p == null || p < 0) return 0;
+    let idx = 0;
+    for (const ch of children[p] || []) {
+      if (nodeType[ch] !== 1) continue;
+      if (ch === nodeIdx) return idx;
+      idx++;
+    }
+    return 0;
+  }
+
+  const domPathCache = new Map();
+  function buildDomPath(nodeIdx, rootIdx) {
+    const key = `${rootIdx}:${nodeIdx}`;
+    if (domPathCache.has(key)) return domPathCache.get(key);
+    if (nodeIdx === rootIdx) {
+      domPathCache.set(key, "");
+      return "";
+    }
+    const p = parentIndex[nodeIdx];
+    if (p == null || p < 0) {
+      domPathCache.set(key, "");
+      return "";
+    }
+    const parentPath = p === rootIdx ? "" : buildDomPath(p, rootIdx);
+    const seg = `${s(nodeName[nodeIdx]).toLowerCase()}:${getElementSiblingIndex(nodeIdx)}`;
+    const out = parentPath ? `${parentPath}/${seg}` : seg;
+    domPathCache.set(key, out);
+    return out;
+  }
+
   const layoutNodeIndex = layout.nodeIndex || [];
   const bounds = layout.bounds || [];
   const texts = layout.text || [];
@@ -525,21 +627,49 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
     return out;
   }
 
+  function isOverflowClippingValue(value) {
+    const v = String(value || "").trim().toLowerCase();
+    return v === "hidden" || v === "clip" || v === "scroll" || v === "auto";
+  }
+
+  function rectExtendsOutside(inner, outer, tolerance = 1) {
+    if (!inner || !outer) return false;
+    return inner.x < outer.x - tolerance ||
+      inner.y < outer.y - tolerance ||
+      inner.x + inner.width > outer.x + outer.width + tolerance ||
+      inner.y + inner.height > outer.y + outer.height + tolerance;
+  }
+
+  function unionRectObjects(rects) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const r of rects) {
+      if (!r) continue;
+      minX = Math.min(minX, r.x);
+      minY = Math.min(minY, r.y);
+      maxX = Math.max(maxX, r.x + r.width);
+      maxY = Math.max(maxY, r.y + r.height);
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return null;
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+  }
+
   const selections = [];
   const pageUrl = opts?.pageMeta?.url || "";
+  const styleByNodeIndex = new Map();
+  const rectByNodeIndex = new Map();
+  for (let i = 0; i < layoutNodeIndex.length; i++) {
+    const ni = layoutNodeIndex[i];
+    styleByNodeIndex.set(ni, decodeStyles(stylesArr[i] || []));
+    rectByNodeIndex.set(ni, rectObj(bounds[i]));
+  }
+
   for (const id of selectedIds) {
     const rootNode = idToNodeIndex.get(id);
     if (rootNode == null) continue;
 
     const subtree = collectSubtree(rootNode);
 
-    let rootRect = null;
-    for (let i = 0; i < layoutNodeIndex.length; i++) {
-      if (layoutNodeIndex[i] === rootNode) {
-        rootRect = rectObj(bounds[i]);
-        break;
-      }
-    }
+    let rootRect = rectByNodeIndex.get(rootNode) || null;
     if (!rootRect) {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (let i = 0; i < layoutNodeIndex.length; i++) {
@@ -552,6 +682,29 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
       }
       rootRect = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
     }
+
+    function canOverflowEscape(nodeIdx) {
+      let cur = nodeIdx;
+      while (cur != null && cur >= 0) {
+        const style = styleByNodeIndex.get(cur);
+        if (style && (isOverflowClippingValue(style["overflow-x"]) || isOverflowClippingValue(style["overflow-y"]))) {
+          return false;
+        }
+        if (cur === rootNode) break;
+        cur = parentIndex[cur];
+      }
+      return true;
+    }
+
+    const protrudingRects = [rootRect];
+    for (const ni of subtree) {
+      const r = rectByNodeIndex.get(ni);
+      if (!r) continue;
+      if (!rectExtendsOutside(r, rootRect)) continue;
+      if (!canOverflowEscape(ni)) continue;
+      protrudingRects.push(r);
+    }
+    rootRect = unionRectObjects(protrudingRects) || rootRect;
 
     const layers = [];
     for (let i = 0; i < layoutNodeIndex.length; i++) {
@@ -566,7 +719,7 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
       const rel = { x: r.x - rootRect.x, y: r.y - rootRect.y, width: r.width, height: r.height };
       if (rel.width <= 0 || rel.height <= 0) continue;
 
-      const style = decodeStyles(stylesArr[i] || []);
+      const style = styleByNodeIndex.get(ni) || decodeStyles(stylesArr[i] || []);
 
       // visibility filter
       if (style["display"] === "none" || style["visibility"] === "hidden" || style["opacity"] === "0") continue;
@@ -621,6 +774,7 @@ function buildExportFromSnapshot(snap, selectedIds, opts) {
         style,
         paintOrder: paintOrders ? paintOrders[i] : i,
         image: imageObj,
+        domPath: buildDomPath(ni, rootNode),
         isSemantic: isSemantic || hasLandmarkRole,
         elemId,
         elemClass

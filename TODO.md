@@ -216,6 +216,31 @@
   - 紫/ピンクのハイライト枠がスクリーンショットに焼き込まれる
 - [x] 修正: キャプチャ前に FIGCAP_CLEAR_OVERLAY でオーバーレイ消去、完了後に再描画 (2026-02-07 完了)
 
+### BF-2: Figmaインポート時にプルダウンが画像崩れし、背景色が白になる
+- [x] 原因調査 (2026-02-07 完了)
+  - フォーム要素の `background-image` が要素全体の IMAGE fill として適用され、矢印画像が引き伸ばされる
+  - セマンティック要素を Frame 化する際に背景色や枠線が適用されず、白背景に見える
+- [x] 修正: フォーム要素では `background-image` の画像塗りを抑制し、セマンティックFrameにも背景スタイルを適用 (2026-02-07 完了)
+
+### BF-3: フォームUI再現度向上とページ背景色の取り込み
+- [x] 事前調査 (2026-02-07 完了)
+  - `version: 1` 固定のため、JSON schema は維持して optional metadata を追加する
+  - CDPの `DOMSnapshot` は `inputValue` / `textValue` / `inputChecked` / `optionSelected` を持つが、ネイティブUIそのものは持たない
+  - ページ背景色は `page` metadata に存在せず、Figma container が白く見える原因になっている
+- [x] 実装: `page.backgroundColor` と `layer.formControl` を追加し、Figma側でフォーム専用描画を行う (2026-02-07 完了)
+
+### BF-4: ロゴや装飾のはみ出し表示がFigmaで欠ける
+- [x] 原因調査 (2026-02-07 完了)
+  - 選択ルートの `rootRect` が親要素基準のままで、親外にはみ出すロゴ/装飾を含めきれていない
+  - Figma側の selection frame は `clipsContent = true` のため、`rootRect` 外の表示が欠ける
+- [x] 実装: overflow可視のはみ出し要素を考慮して `rootRect` を拡張する (2026-02-07 完了)
+
+### BF-5: Figmaインポート時に同じ内容が二重生成される
+- [x] 原因調査 (2026-02-07 完了)
+  - 候補選択で親子要素や同一要素が重複選択されると、JSONの `selections` に重なった内容が並ぶ
+  - Figma側は `selections` をそのまま順番にインポートしているため、同じ内容が二重に生成される
+- [x] 実装: キャプチャ前に重複selectionを除外し、Figmaインポート時にも保険のdedupeを入れる (2026-02-07 完了)
+
 ---
 
 ## 🎯 Phase 3: テスト

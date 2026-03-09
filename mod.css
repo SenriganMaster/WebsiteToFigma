@@ -1,0 +1,233 @@
+@charset "UTF-8";
+/* ▼visual.css */
+input[type="password"] {
+  padding: 5px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.layoutBoxContents .box_inner form td input[type="email"],
+.prof_right .box_inner form td input[type="email"],
+.layoutBoxContents .box_inner form td input[type="tel"],
+.prof_right .box_inner form td input[type="tel"],
+.layoutBoxContents .box_inner form td input[type="password"],
+.prof_right .box_inner form td input[type="password"] {
+  width: 260px;
+}
+.tit--v1 span {
+  position: absolute;
+  left: 75px;
+  top: 24px;
+}
+.tit--v2 span {
+  position: absolute;
+  left: 70px;
+  top: 25px;
+}
+.tit--v2_brown span {
+  position: absolute;
+  left: 70px;
+  top: 25px;
+}
+.tit--v2_purple span {
+  position: absolute;
+  left: 70px;
+  top: 25px;
+}
+.area1 {
+  color: #630000;
+}
+.area2 {
+  color: #8c4c00;
+}
+.area3 {
+  color: #630000;
+}
+.area4 {
+  color: #630000;
+}
+.area5 {
+  color: #133611;
+}
+.area6 {
+  color: #630000;
+}
+.area7 {
+  color: #8c4c00;
+}
+.area8 {
+  color: #365616;
+}
+.area9 {
+  color: #630000;
+}
+.area10 {
+  color: #721d6f;
+}
+.area11 {
+  color: #8c4c00;
+}
+.area12 {
+  color: #8c4c00;
+}
+.area13 {
+  color: #365616;
+}
+.area14 {
+  color: #365616;
+}
+.area15 {
+  color: #4a1151;
+}
+.area16 {
+  color: #4a1151;
+}
+.area17 {
+  color: #365616;
+}
+.area18 {
+  color: #4a1151;
+}
+.area19 {
+  color: #4a1151;
+}
+.area20 {
+  color: #721d6f;
+}
+.area21 {
+  color: #4a1151;
+}
+.area22 {
+  color: #133611;
+}
+.area23 {
+  color: #133611;
+}
+.area24 {
+  color: #721d6f;
+}
+.area25 {
+  color: #721d6f;
+}
+.area26 {
+  color: #4a1151;
+}
+.area27 {
+  color: #365616;
+}
+.area28 {
+  color: #133611;
+}
+.area29 {
+  color: #630000;
+}
+.area30 {
+  color: #001534;
+}
+.area31 {
+  color: #721d6f;
+}
+.area32 {
+  color: #4a1151;
+}
+.area33 {
+  color: #365616;
+}
+.area34 {
+  color: #133611;
+}
+.area35 {
+  color: #001534;
+}
+.area36 {
+  color: #133611;
+}
+.area37 {
+  color: #133611;
+}
+.area38 {
+  color: #133611;
+}
+.area39 {
+  color: #001534;
+}
+.area40 {
+  color: #365616;
+}
+.area41 {
+  color: #365616;
+}
+.area42 {
+  color: #4a1151;
+}
+.area43 {
+  color: #001534;
+}
+.area44 {
+  color: #001534;
+}
+.area45 {
+  color: #721d6f;
+}
+.area46 {
+  color: #721d6f;
+}
+.area47 {
+  color: #4a1151;
+}
+.store1 {
+  color: #630000;
+}
+.store2 {
+  color: #133611;
+}
+.store3 {
+  color: #001534;
+}
+.store4 {
+  color: #8c4c00;
+}
+.store5 {
+  color: #721d6f;
+}
+.store6 {
+  color: #365616;
+}
+.store7 {
+  color: #4a1151;
+}
+.store8 {
+  color: #333333;
+}
+/* ▼pages.css */
+.layoutBoxContents .shop_info h1 span {
+  color: #ffffff;
+  margin: 0 0 0 40px;
+}
+.prof_left .prof_left_schedule .reserved {
+  background: #ffaaaa;
+  color: #c00000;
+}
+.bg_store1 {
+  background-color: #630000;
+}
+.bg_store2 {
+  background-color: #133611;
+}
+.bg_store3 {
+  background-color: #001534;
+}
+.bg_store4 {
+  background-color: #8c4c00;
+}
+.bg_store5 {
+  background-color: #721d6f;
+}
+.bg_store6 {
+  background-color: #365616;
+}
+.bg_store7 {
+  background-color: #4a1151;
+}
+.bg_store8 {
+  background-color: #333333;
+}

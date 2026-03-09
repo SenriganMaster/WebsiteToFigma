@@ -5,3 +5,7 @@
 
 2026-02-07
 - Fixed BF-1: Overlay highlights (purple/pink borders) were being captured in screenshots during image clip capture via CDP Page.captureScreenshot. Added FIGCAP_CLEAR_OVERLAY before capture and updateHighlight() after capture to restore highlights.
+- Fixed BF-2: Prevented form controls such as `select` from turning CSS `background-image` assets into stretched IMAGE fills in Figma, and applied container background/border/shadow styles to semantic Frames during import.
+- Fixed BF-3: Added backward-compatible `page.backgroundColor` and `layer.formControl` metadata, merged DOM form state into CDP captures, and taught the Figma importer to render form controls such as select/input/textarea/button with synthetic labels and chevrons while preserving page background color on the top-level import frame.
+- Fixed BF-4: Expanded selection `rootRect` for descendants that visibly overflow the chosen root when ancestor overflow is not clipping, in both CDP and DOM fallback capture paths. This reduces cropped logos and decorative elements in Figma while keeping clipping behavior for intentionally hidden overflow.
+- Fixed BF-5: Added selection deduplication before capture to remove nested or identical candidate picks, and added a conservative importer-side dedupe for equivalent selections so overlapping duplicates are less likely to be created in Figma.

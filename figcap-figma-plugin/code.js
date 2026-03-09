@@ -56,7 +56,7 @@ function validateFigcapJson(data) {
 async function importFigcapToFigma(data, options) {
   const preservePosition = options.preservePosition !== false; // default true
   const page = data.page || {};
-  const selections = data.selections || [];
+  const selections = dedupeSelections(data.selections || []);
 
   // Collect selection rects
   const rects = selections
@@ -92,6 +92,7 @@ async function importFigcapToFigma(data, options) {
   container.resize(containerWidth, containerHeight);
   container.layoutMode = 'NONE';
   container.clipsContent = false;
+  applyPageBackground(container, page);
 
   // Place container near viewport center
   const center = figma.viewport.center;
@@ -142,6 +143,70 @@ function buildContainerName(page) {
   return `FigCap Import - ${title} (${vw}x${vh})`;
 }
 
+function applyPageBackground(node, page) {
+  const bg = parseCSSColor(page && page.backgroundColor);
+  if (bg && bg.a > 0) {
+    node.fills = [{
+      type: 'SOLID',
+      color: { r: bg.r, g: bg.g, b: bg.b },
+      opacity: bg.a
+    }];
+  } else {
+    node.fills = [];
+  }
+}
+
+function isSimilarRect(a, b, tolerance = 2) {
+  if (!a || !b) return false;
+  return Math.abs(safeNum(a.x, 0) - safeNum(b.x, 0)) <= tolerance &&
+    Math.abs(safeNum(a.y, 0) - safeNum(b.y, 0)) <= tolerance &&
+    Math.abs(safeNum(a.width, 0) - safeNum(b.width, 0)) <= tolerance &&
+    Math.abs(safeNum(a.height, 0) - safeNum(b.height, 0)) <= tolerance;
+}
+
+function buildSelectionFingerprint(sel) {
+  const layers = Array.isArray(sel && sel.layers) ? sel.layers : [];
+  return layers
+    .slice(0, 20)
+    .map(function(layer) {
+      const b = layer && layer.bounds ? layer.bounds : {};
+      return [
+        String(layer && layer.tag || ''),
+        String(layer && layer.type || ''),
+        Math.round(safeNum(b.x, 0)),
+        Math.round(safeNum(b.y, 0)),
+        Math.round(safeNum(b.width, 0)),
+        Math.round(safeNum(b.height, 0)),
+        String(layer && layer.text || '').slice(0, 24)
+      ].join('|');
+    })
+    .join('||');
+}
+
+function areEquivalentSelections(a, b) {
+  if (!a || !b || !a.rootRect || !b.rootRect) return false;
+  if (a.rootNodeIndex != null && b.rootNodeIndex != null && a.rootNodeIndex === b.rootNodeIndex) {
+    return true;
+  }
+  if (!isSimilarRect(a.rootRect, b.rootRect, 2)) return false;
+
+  const aLayers = Array.isArray(a.layers) ? a.layers : [];
+  const bLayers = Array.isArray(b.layers) ? b.layers : [];
+  if (aLayers.length !== bLayers.length) return false;
+
+  return buildSelectionFingerprint(a) === buildSelectionFingerprint(b);
+}
+
+function dedupeSelections(selections) {
+  const kept = [];
+  for (const sel of selections) {
+    if (!sel) continue;
+    if (kept.some(existing => areEquivalentSelections(existing, sel))) continue;
+    kept.push(sel);
+  }
+  return kept;
+}
+
 async function importSelection(parentFrame, sel, pos, options) {
   const selFrame = figma.createFrame();
   selFrame.name = `Selection ${String(sel.id || '').slice(0, 8) || ''}`.trim();
@@ -165,6 +230,7 @@ async function importSelection(parentFrame, sel, pos, options) {
   var layers = Array.isArray(sel.layers) ? sel.layers.slice() : [];
   layers.sort(function(a, b) { return safeNum(a.paintOrder, 0) - safeNum(b.paintOrder, 0); });
   layers = compressWrappers(layers);
+  const childrenMap = buildChildrenMap(layers);
 
   // Build hierarchy: create Frames for semantic containers
   const nodeToFigmaFrame = new Map(); // nodeIndex -> Figma Frame
@@ -198,6 +264,7 @@ async function importSelection(parentFrame, sel, pos, options) {
     frame.layoutMode = 'NONE';
     frame.clipsContent = false;
     frame.fills = []; // transparent
+    applyBoxStyle(frame, layer.style || {});
     
     targetParent.appendChild(frame);
     
@@ -254,6 +321,8 @@ async function importSelection(parentFrame, sel, pos, options) {
       }
     }
 
+    const childLayers = layer.nodeIndex != null ? (childrenMap.get(layer.nodeIndex) || []) : [];
+
     if (type === 'TEXT') {
       const node = await createTextFromLayer(targetParent, adjustedLayer, options);
       if (node) {
@@ -261,17 +330,26 @@ async function importSelection(parentFrame, sel, pos, options) {
         if (layer.nodeIndex != null) nodeToFigmaNode.set(layer.nodeIndex, node);
       }
     } else if (type === 'BOX' || type === 'IMAGE') {
-      const node = await createRectFromLayer(targetParent, adjustedLayer);
-      if (node) {
-        rects++;
-        if (layer.nodeIndex != null) nodeToFigmaNode.set(layer.nodeIndex, node);
+      if (isFormControlLayer(adjustedLayer)) {
+        const rendered = await createFormControlFromLayer(targetParent, adjustedLayer, options, childLayers, childrenMap);
+        if (rendered && rendered.node) {
+          frames += safeNum(rendered.frames, 0);
+          rects += safeNum(rendered.rects, 0);
+          texts += safeNum(rendered.texts, 0);
+          if (layer.nodeIndex != null) nodeToFigmaNode.set(layer.nodeIndex, rendered.node);
+        }
+      } else {
+        const node = await createRectFromLayer(targetParent, adjustedLayer);
+        if (node) {
+          rects++;
+          if (layer.nodeIndex != null) nodeToFigmaNode.set(layer.nodeIndex, node);
+        }
       }
     }
   }
 
   // Fourth pass: apply Auto Layout to flex-like containers (only safe cases)
   try {
-    const childrenMap = buildChildrenMap(layers);
     for (const entry of nodeToFigmaFrame.entries()) {
       const nodeIndex = entry[0];
       const figmaFrame = entry[1];
@@ -494,6 +572,7 @@ function compressWrappers(layers) {
       // 条件: BOX かつ 非セマンティック
       if (String(w.type || '').toUpperCase() !== 'BOX') continue;
       if (w.isSemantic) continue;
+      if (w.formControl) continue;
 
       var kids = children.get(w.nodeIndex) || [];
       if (kids.length !== 1) continue;
@@ -624,6 +703,170 @@ function findLayerForFrame(frame, nodeToFigmaFrame, nodeToLayer) {
   return null;
 }
 
+function isNativeFormTag(tag) {
+  var t = String(tag || '').toLowerCase();
+  return t === 'select' || t === 'option' || t === 'input' || t === 'textarea' || t === 'button';
+}
+
+function shouldApplyImageFill(layer) {
+  if (!layer || !layer.image || !layer.image.dataUrl) return false;
+  var type = String(layer.type || '').toUpperCase();
+  if (type === 'IMAGE') return true;
+  return !isNativeFormTag(layer.tag);
+}
+
+function isFormControlLayer(layer) {
+  return !!(layer && layer.formControl && isNativeFormTag(layer.tag));
+}
+
+function isTextLikeInputType(inputType) {
+  return ['text', 'email', 'search', 'url', 'tel', 'password', 'number'].indexOf(String(inputType || '').toLowerCase()) >= 0;
+}
+
+function hasDescendantTextLayer(childLayers, childrenMap) {
+  const queue = Array.isArray(childLayers) ? childLayers.slice() : [];
+  while (queue.length) {
+    const cur = queue.shift();
+    if (!cur) continue;
+    if (String(cur.type || '').toUpperCase() === 'TEXT') return true;
+    if (cur.nodeIndex != null && childrenMap && childrenMap.has(cur.nodeIndex)) {
+      queue.push.apply(queue, childrenMap.get(cur.nodeIndex));
+    }
+  }
+  return false;
+}
+
+function buildFormDisplayText(formControl) {
+  if (!formControl) return '';
+  const kind = String(formControl.kind || '').toLowerCase();
+  const inputType = String(formControl.inputType || '').toLowerCase();
+
+  if (kind === 'select' || kind === 'button') {
+    return String(formControl.displayText || formControl.value || '').trim();
+  }
+  if (kind === 'textarea') {
+    return String(formControl.displayText || formControl.value || '').replace(/\r\n/g, '\n');
+  }
+  if (kind === 'input') {
+    if (inputType === 'password') {
+      const len = String(formControl.value || '').length;
+      return len ? '*'.repeat(len) : '';
+    }
+    if (isTextLikeInputType(inputType)) {
+      return String(formControl.displayText || formControl.value || '').trim();
+    }
+  }
+  return '';
+}
+
+function isPlaceholderText(formControl, displayText) {
+  if (!formControl) return false;
+  const actual = String(displayText || '');
+  if (actual) return false;
+  return !!String(formControl.placeholder || '').trim();
+}
+
+function buildFormTextStyle(style, formControl) {
+  const out = Object.assign({}, style || {});
+  const displayText = buildFormDisplayText(formControl);
+  if (!displayText && formControl && formControl.placeholder) {
+    out.color = out.color || 'rgba(0, 0, 0, 0.45)';
+  }
+  return out;
+}
+
+function buildControlTextLayer(layer, controlBounds, formControl) {
+  const displayText = buildFormDisplayText(formControl);
+  const placeholder = String(formControl && formControl.placeholder ? formControl.placeholder : '');
+  const text = displayText || placeholder;
+  if (!text) return null;
+
+  const style = buildFormTextStyle(layer.style || {}, formControl);
+  const isTextarea = String(formControl && formControl.kind || '').toLowerCase() === 'textarea';
+  if (String(formControl && formControl.kind || '').toLowerCase() === 'button' && !style['text-align']) {
+    style['text-align'] = 'center';
+  }
+
+  return {
+    tag: '#text',
+    type: 'TEXT',
+    text,
+    style,
+    bounds: controlBounds
+  };
+}
+
+function buildControlTextBounds(layer, formControl, bounds) {
+  const style = layer.style || {};
+  const fontSize = parsePx(style['font-size']) || 14;
+  const lineHeight = parsePx(style['line-height']) || Math.round(fontSize * 1.35);
+  const left = safePx(style['padding-left']);
+  const right = safePx(style['padding-right']);
+  const top = safePx(style['padding-top']);
+  const bottom = safePx(style['padding-bottom']);
+
+  let x = isFiniteNumber(left) ? left : 12;
+  let y = isFiniteNumber(top) ? top : Math.max(4, Math.round((bounds.height - lineHeight) / 2));
+  let width = bounds.width - x - (isFiniteNumber(right) ? right : 12);
+  let height = isFiniteNumber(top) && isFiniteNumber(bottom)
+    ? bounds.height - top - bottom
+    : Math.max(lineHeight + 4, 1);
+
+  if (String(formControl && formControl.kind || '').toLowerCase() === 'select') {
+    width -= Math.min(28, Math.max(18, Math.round(bounds.height * 0.8)));
+  }
+
+  if (String(formControl && formControl.kind || '').toLowerCase() === 'textarea') {
+    y = isFiniteNumber(top) ? top : 8;
+    height = Math.max(1, bounds.height - y - (isFiniteNumber(bottom) ? bottom : 8));
+  }
+
+  return {
+    x: Math.max(0, Math.round(x)),
+    y: Math.max(0, Math.round(y)),
+    width: Math.max(1, Math.round(width)),
+    height: Math.max(1, Math.round(height))
+  };
+}
+
+function buildSelectChevronLayer(layer, bounds) {
+  const style = Object.assign({}, layer.style || {});
+  style['text-align'] = 'center';
+  const size = clamp(Math.round(bounds.height * 0.42), 10, 18);
+  style['font-size'] = `${size}px`;
+  style['line-height'] = `${size}px`;
+  style['font-weight'] = style['font-weight'] || '700';
+  style.color = style.color || 'rgba(0, 0, 0, 0.65)';
+
+  const boxWidth = Math.min(24, Math.max(16, Math.round(bounds.height * 0.65)));
+  return {
+    tag: '#text',
+    type: 'TEXT',
+    text: '▼',
+    style,
+    bounds: {
+      x: Math.max(0, bounds.width - boxWidth - 8),
+      y: Math.max(0, Math.round((bounds.height - size) / 2)),
+      width: boxWidth,
+      height: Math.max(1, size + 2)
+    }
+  };
+}
+
+function buildBooleanControlMark(fillColor, isRadio) {
+  if (isRadio) {
+    const node = figma.createEllipse();
+    node.fills = [{ type: 'SOLID', color: fillColor, opacity: 1 }];
+    node.strokes = [];
+    return node;
+  }
+  const node = figma.createRectangle();
+  node.fills = [{ type: 'SOLID', color: fillColor, opacity: 1 }];
+  node.strokes = [];
+  node.cornerRadius = 2;
+  return node;
+}
+
 // Build a descriptive name for a layer
 function buildLayerName(layer) {
   var tag = String(layer.tag || '').toLowerCase();
@@ -691,6 +934,83 @@ function fileNameFromUrl(src) {
 // ---------------------------
 // Rectangle creation
 // ---------------------------
+async function createFormControlFromLayer(parent, layer, options, childLayers, childrenMap) {
+  const b = normalizeBounds(layer.bounds);
+  if (!b) return false;
+
+  const frame = figma.createFrame();
+  parent.appendChild(frame);
+  frame.x = b.x;
+  frame.y = b.y;
+  frame.resize(Math.max(1, b.width), Math.max(1, b.height));
+  frame.layoutMode = 'NONE';
+  frame.clipsContent = true;
+  frame.fills = [];
+  frame.strokes = [];
+  frame.effects = [];
+  frame.name = buildLayerName(layer);
+
+  let frames = 1;
+  let rects = 0;
+  let texts = 0;
+
+  const bgLayer = Object.assign({}, layer, {
+    type: 'BOX',
+    bounds: { x: 0, y: 0, width: b.width, height: b.height },
+    image: undefined,
+    formControl: undefined
+  });
+  const bg = await createRectFromLayer(frame, bgLayer);
+  if (bg) {
+    bg.name = `${frame.name} Background`;
+    rects++;
+  }
+
+  const formControl = layer.formControl || {};
+  const kind = String(formControl.kind || '').toLowerCase();
+  const childHasText = hasDescendantTextLayer(childLayers, childrenMap);
+
+  if (!childHasText) {
+    const textBounds = buildControlTextBounds(layer, formControl, b);
+    const textLayer = buildControlTextLayer(layer, textBounds, formControl);
+    if (textLayer) {
+      const textNode = await createTextFromLayer(frame, textLayer, options);
+      if (textNode) {
+        textNode.name = `${frame.name} Label`;
+        texts++;
+      }
+    }
+  }
+
+  if (kind === 'select') {
+    const arrowLayer = buildSelectChevronLayer(layer, b);
+    const arrowNode = await createTextFromLayer(frame, arrowLayer, options);
+    if (arrowNode) {
+      arrowNode.name = `${frame.name} Chevron`;
+      texts++;
+    }
+  }
+
+  if (kind === 'input') {
+    const inputType = String(formControl.inputType || '').toLowerCase();
+    if ((inputType === 'checkbox' || inputType === 'radio') && formControl.checked) {
+      const markColor = parseCSSColor((layer.style || {})['color']) || parseCSSColor((layer.style || {})['border-top-color']) || { r: 0.15, g: 0.15, b: 0.15, a: 1 };
+      const isRadio = inputType === 'radio';
+      const mark = buildBooleanControlMark({ r: markColor.r, g: markColor.g, b: markColor.b }, isRadio);
+      frame.appendChild(mark);
+      const size = isRadio
+        ? Math.max(6, Math.round(Math.min(b.width, b.height) * 0.45))
+        : Math.max(8, Math.round(Math.min(b.width, b.height) * 0.5));
+      mark.resize(size, size);
+      mark.x = Math.round((b.width - size) / 2);
+      mark.y = Math.round((b.height - size) / 2);
+      rects++;
+    }
+  }
+
+  return { node: frame, frames, rects, texts };
+}
+
 async function createRectFromLayer(parent, layer) {
   const b = normalizeBounds(layer.bounds);
   if (!b) return false;
@@ -708,7 +1028,7 @@ async function createRectFromLayer(parent, layer) {
   // Image fill if dataUrl is available
   let imageLoaded = false;
   const imgDataUrl = layer.image && layer.image.dataUrl ? layer.image.dataUrl : "";
-  if (imgDataUrl) {
+  if (imgDataUrl && shouldApplyImageFill(layer)) {
     console.log('[FigCap] Attempting image import, dataUrl length:', imgDataUrl.length);
     try {
       const bytes = dataUrlToBytes(imgDataUrl);
@@ -730,6 +1050,8 @@ async function createRectFromLayer(parent, layer) {
       // Log error for debugging but continue import
       console.log('[FigCap] Image import failed:', e.message || e);
     }
+  } else if (imgDataUrl) {
+    console.log('[FigCap] Skipping image fill for form control background-image:', layer.tag);
   } else if (String(layer.type || '').toUpperCase() === 'IMAGE') {
     console.log('[FigCap] IMAGE layer without dataUrl:', layer.image);
   }
